@@ -48,8 +48,8 @@ export default function Home() {
       const notificationData = notification.request.content.data;
       
       if (notificationData?.type === 'medication_reminder') {
-        // ALWAYS stop the alarm sound first, regardless of action
-        await stopAlarmSound();
+        // IMMEDIATELY stop the alarm sound first, regardless of action
+        stopAlarmSoundImmediate();
         
         if (actionIdentifier === 'STOP_ACTION') {
           // Stop alarm and dismiss notification completely
@@ -141,6 +141,25 @@ export default function Home() {
       }, 60000);
     } catch (error) {
       console.log('Error playing alarm sound:', error);
+    }
+  };
+
+  const stopAlarmSoundImmediate = () => {
+    // Immediate synchronous stop without await to prevent delays
+    try {
+      if (alarmSound) {
+        alarmSound.stopAsync().catch(() => {});
+        alarmSound.unloadAsync().catch(() => {});
+        setAlarmSound(null);
+      }
+      
+      if (globalAlarmSound.current) {
+        globalAlarmSound.current.stopAsync().catch(() => {});
+        globalAlarmSound.current.unloadAsync().catch(() => {});
+        globalAlarmSound.current = null;
+      }
+    } catch (error) {
+      console.log('Error stopping alarm sound immediately:', error);
     }
   };
 

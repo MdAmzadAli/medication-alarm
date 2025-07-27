@@ -541,6 +541,25 @@ export default function AddMedication() {
     }
   };
 
+  const stopAlarmSoundImmediate = () => {
+    // Immediate synchronous stop without await to prevent delays
+    try {
+      if (alarmSound) {
+        alarmSound.stopAsync().catch(() => {});
+        alarmSound.unloadAsync().catch(() => {});
+        setAlarmSound(null);
+      }
+      
+      if (globalAlarmSound.current) {
+        globalAlarmSound.current.stopAsync().catch(() => {});
+        globalAlarmSound.current.unloadAsync().catch(() => {});
+        globalAlarmSound.current = null;
+      }
+    } catch (error) {
+      console.log('Error stopping alarm sound immediately:', error);
+    }
+  };
+
   const stopAlarmSound = async () => {
     try {
       // Stop the current state alarm
@@ -696,7 +715,7 @@ export default function AddMedication() {
           <Text style={styles.testButtonText}>🔔 Test Medication Alarm</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.stopAlarmButton} onPress={stopAlarmSound}>
+        <TouchableOpacity style={styles.stopAlarmButton} onPress={stopAlarmSoundImmediate}>
           <Text style={styles.stopAlarmButtonText}>🛑 Stop Test Alarm</Text>
         </TouchableOpacity>
 

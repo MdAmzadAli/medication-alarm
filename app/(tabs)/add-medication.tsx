@@ -143,7 +143,10 @@ export default function AddMedication() {
   const updateTime = (index: number, time: string) => {
     const newTimes = [...formData.times];
     newTimes[index] = time;
-    setFormData({ ...formData, times: newTimes });
+    setFormData(prevData => ({ 
+      ...prevData, 
+      times: newTimes 
+    }));
   };
 
   const formatTime = (hours: number, minutes: number) => {
@@ -154,49 +157,53 @@ export default function AddMedication() {
   };
 
   const TimePickerComponent = ({ index }: { index: number }) => {
-    const currentTime = formData.times[index] || '';
+    const [showHourPicker, setShowHourPicker] = useState(false);
+    const [showMinutePicker, setShowMinutePicker] = useState(false);
     
-    // Parse current time or use defaults
+    // Get current time from form data
+    const currentTime = formData.times[index] || '12:00 AM';
+    
+    // Parse current time to get individual components
     const parseTime = (timeString: string) => {
       if (!timeString) return { hour: 12, minute: 0, period: 'AM' };
       
-      const [timePart, period] = timeString.split(' ');
-      if (!timePart || !period) return { hour: 12, minute: 0, period: 'AM' };
+      const parts = timeString.split(' ');
+      if (parts.length !== 2) return { hour: 12, minute: 0, period: 'AM' };
       
-      const [hourStr, minuteStr] = timePart.split(':');
+      const [timePart, period] = parts;
+      const timeParts = timePart.split(':');
+      if (timeParts.length !== 2) return { hour: 12, minute: 0, period: 'AM' };
+      
+      const [hourStr, minuteStr] = timeParts;
       return {
         hour: parseInt(hourStr) || 12,
         minute: parseInt(minuteStr) || 0,
         period: period || 'AM'
       };
     };
-
-    const [showHourPicker, setShowHourPicker] = useState(false);
-    const [showMinutePicker, setShowMinutePicker] = useState(false);
     
-    // Get current parsed time values
     const { hour: selectedHour, minute: selectedMinute, period: selectedPeriod } = parseTime(currentTime);
 
     const hours = Array.from({ length: 12 }, (_, i) => i + 1);
     const minutes = Array.from({ length: 60 }, (_, i) => i);
     const periods = ['AM', 'PM'];
 
-    // Update time and close picker
+    // Update time handlers
     const handleHourSelect = (hour: number) => {
-      const time = `${hour}:${selectedMinute.toString().padStart(2, '0')} ${selectedPeriod}`;
-      updateTime(index, time);
+      const newTime = `${hour}:${selectedMinute.toString().padStart(2, '0')} ${selectedPeriod}`;
+      updateTime(index, newTime);
       setShowHourPicker(false);
     };
 
     const handleMinuteSelect = (minute: number) => {
-      const time = `${selectedHour}:${minute.toString().padStart(2, '0')} ${selectedPeriod}`;
-      updateTime(index, time);
+      const newTime = `${selectedHour}:${minute.toString().padStart(2, '0')} ${selectedPeriod}`;
+      updateTime(index, newTime);
       setShowMinutePicker(false);
     };
 
     const handlePeriodSelect = (period: string) => {
-      const time = `${selectedHour}:${selectedMinute.toString().padStart(2, '0')} ${period}`;
-      updateTime(index, time);
+      const newTime = `${selectedHour}:${selectedMinute.toString().padStart(2, '0')} ${period}`;
+      updateTime(index, newTime);
     };
 
     return (
@@ -540,7 +547,7 @@ export default function AddMedication() {
 
         <Text style={styles.label}>Scheduled Times</Text>
         {formData.times.map((time, index) => (
-          <TimePickerComponent key={index} index={index} />
+          <TimePickerComponent key={`${index}-${time}`} index={index} />
         ))}
 
         <TouchableOpacity style={styles.addTimeButton} onPress={addTimeSlot}>

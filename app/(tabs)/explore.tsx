@@ -2,65 +2,90 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useFocusEffect } from '@react-navigation/native';
 
-interface MedicationHistory {
+interface Medication {
   id: string;
   name: string;
   dose: string;
-  takenAt: string;
-  scheduledTime: string;
+  timesPerDay: number;
+  scheduledTimes: string[];
+  duration: number;
+  startDate: string;
+  imageUri?: string;
 }
 
 export default function MedicationHistory() {
-  const [history, setHistory] = useState<MedicationHistory[]>([]);
+  const [medications, setMedications] = useState<Medication[]>([]);
 
-  useEffect(() => {
-    loadHistory();
-  }, []);
-
-  const loadHistory = async () => {
+  const loadMedications = async () => {
     try {
-      const stored = await AsyncStorage.getItem('medicationHistory');
+      const stored = await AsyncStorage.getItem('medications');
       if (stored) {
-        setHistory(JSON.parse(stored));
+        setMedications(JSON.parse(stored));
       }
     } catch (error) {
-      console.error('Error loading history:', error);
+      console.error('Error loading medications:', error);
     }
   };
 
-  const formatDate = (dateString: string) => {
-    const date = new Date(dateString);
-    return date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
+  useFocusEffect(
+    React.useCallback(() => {
+      loadMedications();
+    }, [])
+  );
+
+  const isExpired = (medication: Medication) => {
+    const startDate = new Date(medication.startDate);
+    const endDate = new Date(startDate);
+    endDate.setDate(startDate.getDate() + medication.duration);
+    return new Date() > endDate;
   };
+
+  const activeMedications = medications.filter(med => !isExpired(med));
+  const expiredMedications = medications.filter(med => isExpired(med));
 
   return (
     <ScrollView style={styles.container}>
       <Text style={styles.title}>Medication History</Text>
       
-      {history.length === 0 ? (
-        <View style={styles.emptyState}>
-          <Text style={styles.emptyText}>No medication history yet</Text>
-          <Text style={styles.emptySubtext}>
-            Your medication intake history will appear here
-          </Text>
-        </View>
-      ) : (
-        <View style={styles.historyList}>
-          {history.map((item) => (
-            <View key={item.id} style={styles.historyCard}>
-              <Text style={styles.medicationName}>{item.name}</Text>
-              <Text style={styles.dose}>Dose: {item.dose}</Text>
-              <Text style={styles.scheduledTime}>
-                Scheduled: {item.scheduledTime}
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Active Medications ({activeMedications.length})</Text>
+        {activeMedications.length === 0 ? (
+          <Text style={styles.emptyText}>No active medications</Text>
+        ) : (
+          activeMedications.map((med) => (
+            <View key={med.id} style={styles.medicationItem}>
+              <Text style={styles.medicationName}>{med.name}</Text>
+              <Text style={styles.medicationDetail}>
+                Started: {new Date(med.startDate).toLocaleDateString()}
               </Text>
-              <Text style={styles.takenTime}>
-                Taken: {formatDate(item.takenAt)}
+              <Text style={styles.medicationDetail}>
+                Duration: {med.duration} days
               </Text>
             </View>
-          ))}
-        </View>
-      )}
+          ))
+        )}
+      </View>
+
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Completed Medications ({expiredMedications.length})</Text>
+        {expiredMedications.length === 0 ? (
+          <Text style={styles.emptyText}>No completed medications</Text>
+        ) : (
+          expiredMedications.map((med) => (
+            <View key={med.id} style={[styles.medicationItem, styles.expiredItem]}>
+              <Text style={styles.medicationName}>{med.name}</Text>
+              <Text style={styles.medicationDetail}>
+                Started: {new Date(med.startDate).toLocaleDateString()}
+              </Text>
+              <Text style={styles.medicationDetail}>
+                Completed: {new Date(new Date(med.startDate).getTime() + med.duration * 24 * 60 * 60 * 1000).toLocaleDateString()}
+              </Text>
+            </View>
+          ))
+        )}
+      </View>
     </ScrollView>
   );
 }
@@ -77,27 +102,25 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginBottom: 30,
     color: '#333',
+    marginTop: 40,
   },
-  emptyState: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginTop: 100,
+  section: {
+    marginBottom: 30,
+  },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#333',
+    marginBottom: 15,
   },
   emptyText: {
-    fontSize: 18,
-    color: '#666',
-    marginBottom: 10,
-  },
-  emptySubtext: {
     fontSize: 14,
     color: '#999',
+    fontStyle: 'italic',
     textAlign: 'center',
+    padding: 20,
   },
-  historyList: {
-    marginTop: 20,
-  },
-  historyCard: {
+  medicationItem: {
     backgroundColor: 'white',
     padding: 15,
     borderRadius: 10,
@@ -108,24 +131,19 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 3,
   },
+  expiredItem: {
+    backgroundColor: '#f8f8f8',
+    opacity: 0.7,
+  },
   medicationName: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: 'bold',
     color: '#333',
     marginBottom: 5,
   },
-  dose: {
+  medicationDetail: {
     fontSize: 14,
     color: '#666',
     marginBottom: 3,
-  },
-  scheduledTime: {
-    fontSize: 14,
-    color: '#007AFF',
-    marginBottom: 3,
-  },
-  takenTime: {
-    fontSize: 14,
-    color: '#34C759',
   },
 });

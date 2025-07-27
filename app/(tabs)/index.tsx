@@ -11,6 +11,7 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Notifications from 'expo-notifications';
 import { Audio } from 'expo-av';
+import { useFocusEffect } from '@react-navigation/native';
 
 interface Medication {
   id: string;

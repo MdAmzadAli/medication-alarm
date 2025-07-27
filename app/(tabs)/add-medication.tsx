@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import * as Notifications from 'expo-notifications';
+import { Audio } from 'expo-av';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
 
@@ -41,7 +42,7 @@ export default function AddMedication() {
   React.useEffect(() => {
     requestNotificationPermissions();
     
-    // Configure notification handler
+    // Configure notification handler for continuous alarm
     Notifications.setNotificationHandler({
       handleNotification: async () => ({
         shouldShowAlert: true,
@@ -49,6 +50,16 @@ export default function AddMedication() {
         shouldSetBadge: true,
       }),
     });
+
+    // Listen for notification responses to handle alarm dismissal
+    const subscription = Notifications.addNotificationResponseReceivedListener(response => {
+      if (response.notification.request.content.data?.type === 'medication_reminder') {
+        // Stop alarm when user interacts with notification
+        stopAlarmSound();
+      }
+    });
+
+    return () => subscription.remove();
   }, []);
 
   const requestNotificationPermissions = async () => {
@@ -149,7 +160,7 @@ export default function AddMedication() {
     const [showHourPicker, setShowHourPicker] = useState(false);
     const [showMinutePicker, setShowMinutePicker] = useState(false);
 
-    const hours = Array.from({ length: 12 }, (_, i) => i === 0 ? 12 : i);
+    const hours = Array.from({ length: 12 }, (_, i) => i + 1);
     const minutes = Array.from({ length: 60 }, (_, i) => i);
     const periods = ['AM', 'PM'];
 
@@ -312,10 +323,10 @@ export default function AddMedication() {
         if (notificationDate > new Date()) {
           await Notifications.scheduleNotificationAsync({
             content: {
-              title: '🔔 MEDICATION REMINDER!',
-              body: `💊 ${name}\n📋 Dose: ${dose}\n⏰ Time: ${time}\n📅 Day ${day + 1} of ${duration}`,
+              title: '🚨 MEDICATION ALARM! 🚨',
+              body: `💊 ${name}\n📋 Dose: ${dose}\n⏰ Time: ${time}\n📅 Day ${day + 1} of ${duration}\n\n🔔 TAP TO STOP ALARM`,
               sound: true,
-              priority: 'high',
+              priority: 'max',
               vibrate: [0, 250, 250, 250],
               data: {
                 medicationName: name,
@@ -323,7 +334,8 @@ export default function AddMedication() {
                 scheduledTime: time,
                 day: day + 1,
                 duration: duration,
-                type: 'medication_reminder'
+                type: 'medication_reminder',
+                shouldPlayAlarm: true
               },
             },
             trigger: {
@@ -336,22 +348,58 @@ export default function AddMedication() {
     }
   };
 
+  const [alarmSound, setAlarmSound] = useState<Audio.Sound | null>(null);
+
+  const playAlarmSound = async () => {
+    try {
+      const { sound } = await Audio.Sound.createAsync(
+        { uri: 'https://www.soundjay.com/misc/sounds/bell-ringing-05.wav' },
+        { shouldPlay: true, isLooping: true, volume: 1.0 }
+      );
+      setAlarmSound(sound);
+    } catch (error) {
+      console.log('Error playing alarm sound:', error);
+    }
+  };
+
+  const stopAlarmSound = async () => {
+    try {
+      if (alarmSound) {
+        await alarmSound.stopAsync();
+        await alarmSound.unloadAsync();
+        setAlarmSound(null);
+      }
+    } catch (error) {
+      console.log('Error stopping alarm sound:', error);
+    }
+  };
+
   const testNotification = async () => {
+    // Test the alarm sound
+    await playAlarmSound();
+    
+    // Show notification
     await Notifications.scheduleNotificationAsync({
       content: {
         title: '🔔 MEDICATION ALARM TEST!',
-        body: '💊 Test Medicine\n📋 Dose: 1 tablet\n⏰ Time: Now\nThis is how your medication reminders will sound!',
+        body: '💊 Test Medicine\n📋 Dose: 1 tablet\n⏰ Time: Now\nTap to stop alarm!',
         sound: true,
         priority: 'high',
         vibrate: [0, 250, 250, 250],
         data: {
-          type: 'test_notification'
+          type: 'medication_reminder',
+          medicationName: 'Test Medicine',
         },
       },
       trigger: {
         seconds: 2,
       },
     });
+
+    // Auto-stop after 30 seconds if not manually stopped
+    setTimeout(() => {
+      stopAlarmSound();
+    }, 30000);
   };
 
   const addMedication = async () => {
@@ -450,7 +498,11 @@ export default function AddMedication() {
         </TouchableOpacity>
 
         <TouchableOpacity style={styles.testButton} onPress={testNotification}>
-          <Text style={styles.testButtonText}>🔔 Test Notification Sound</Text>
+          <Text style={styles.testButtonText}>🔔 Test Medication Alarm</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.stopAlarmButton} onPress={stopAlarmSound}>
+          <Text style={styles.stopAlarmButtonText}>🛑 Stop Test Alarm</Text>
         </TouchableOpacity>
 
         <TouchableOpacity style={styles.submitButton} onPress={addMedication}>
@@ -685,6 +737,18 @@ const styles = StyleSheet.create({
     marginBottom: 15,
   },
   testButtonText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  stopAlarmButton: {
+    backgroundColor: '#FF3B30',
+    padding: 10,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginBottom: 15,
+  },
+  stopAlarmButtonText: {
     color: 'white',
     fontSize: 16,
     fontWeight: '600',

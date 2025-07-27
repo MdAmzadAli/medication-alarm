@@ -2,15 +2,15 @@ import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
-  TouchableOpacity,
   ScrollView,
-  Alert,
   Image,
+  TouchableOpacity,
+  Alert,
   StyleSheet,
 } from 'react-native';
-import * as Notifications from 'expo-notifications';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useFocusEffect } from '@react-navigation/native';
+import * as Notifications from 'expo-notifications';
+import { Audio } from 'expo-av';
 
 interface Medication {
   id: string;
@@ -23,8 +23,66 @@ interface Medication {
   imageUri?: string;
 }
 
-export default function MedicationList() {
+export default function Home() {
   const [medications, setMedications] = useState<Medication[]>([]);
+  const [alarmSound, setAlarmSound] = useState<Audio.Sound | null>(null);
+
+  useEffect(() => {
+    loadMedications();
+
+    // Listen for notifications when app is in foreground
+    const notificationListener = Notifications.addNotificationReceivedListener(notification => {
+      if (notification.request.content.data?.shouldPlayAlarm) {
+        playAlarmSound();
+      }
+    });
+
+    // Listen for notification interactions
+    const responseListener = Notifications.addNotificationResponseReceivedListener(response => {
+      if (response.notification.request.content.data?.type === 'medication_reminder') {
+        stopAlarmSound();
+        Alert.alert(
+          'Medication Reminder',
+          `Time to take your ${response.notification.request.content.data.medicationName}!\nDose: ${response.notification.request.content.data.dose}`,
+          [{ text: 'Taken', onPress: () => {} }]
+        );
+      }
+    });
+
+    return () => {
+      notificationListener.remove();
+      responseListener.remove();
+    };
+  }, []);
+
+  const playAlarmSound = async () => {
+    try {
+      const { sound } = await Audio.Sound.createAsync(
+        { uri: 'https://www.soundjay.com/misc/sounds/bell-ringing-05.wav' },
+        { shouldPlay: true, isLooping: true, volume: 1.0 }
+      );
+      setAlarmSound(sound);
+
+      // Auto-stop after 60 seconds
+      setTimeout(() => {
+        stopAlarmSound();
+      }, 60000);
+    } catch (error) {
+      console.log('Error playing alarm sound:', error);
+    }
+  };
+
+  const stopAlarmSound = async () => {
+    try {
+      if (alarmSound) {
+        await alarmSound.stopAsync();
+        await alarmSound.unloadAsync();
+        setAlarmSound(null);
+      }
+    } catch (error) {
+      console.log('Error stopping alarm sound:', error);
+    }
+  };
 
   const loadMedications = async () => {
     try {

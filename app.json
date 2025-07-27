@@ -23,7 +23,8 @@
     },
     "notification": {
       "icon": "./assets/images/icon.png",
-      "color": "#ffffff"
+      "color": "#ffffff",
+      "sounds": ["default"]
     },
     "android": {
       "adaptiveIcon": {

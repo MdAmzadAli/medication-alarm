@@ -40,6 +40,15 @@ export default function AddMedication() {
 
   React.useEffect(() => {
     requestNotificationPermissions();
+    
+    // Configure notification handler
+    Notifications.setNotificationHandler({
+      handleNotification: async () => ({
+        shouldShowAlert: true,
+        shouldPlaySound: true,
+        shouldSetBadge: true,
+      }),
+    });
   }, []);
 
   const requestNotificationPermissions = async () => {
@@ -139,20 +148,23 @@ export default function AddMedication() {
     const [selectedPeriod, setSelectedPeriod] = useState('AM');
     const [showHourPicker, setShowHourPicker] = useState(false);
     const [showMinutePicker, setShowMinutePicker] = useState(false);
+    const [isInitialized, setIsInitialized] = useState(false);
 
-    const hours = Array.from({ length: 12 }, (_, i) => i);
+    const hours = Array.from({ length: 12 }, (_, i) => i === 0 ? 12 : i);
     const minutes = Array.from({ length: 60 }, (_, i) => i);
     const periods = ['AM', 'PM'];
 
     React.useEffect(() => {
-      const displayHour = selectedHour === 0 ? 12 : selectedHour;
+      if (!isInitialized) {
+        setSelectedHour(12);
+        setIsInitialized(true);
+        return;
+      }
+      
+      const displayHour = selectedHour;
       const time = `${displayHour}:${selectedMinute.toString().padStart(2, '0')} ${selectedPeriod}`;
       updateTime(index, time);
-    }, [selectedHour, selectedMinute, selectedPeriod, index]);
-
-    const formatDisplayHour = (hour: number) => {
-      return hour === 0 ? 12 : hour;
-    };
+    }, [selectedHour, selectedMinute, selectedPeriod, isInitialized]);
 
     const handleHourSelect = (hour: number) => {
       setSelectedHour(hour);
@@ -175,7 +187,7 @@ export default function AddMedication() {
             onPress={() => setShowHourPicker(!showHourPicker)}
           >
             <Text style={styles.timeDisplayText}>
-              {formatDisplayHour(selectedHour).toString().padStart(2, '0')}
+              {selectedHour.toString().padStart(2, '0')}
             </Text>
           </TouchableOpacity>
 
@@ -236,7 +248,7 @@ export default function AddMedication() {
                     styles.pickerOptionText,
                     selectedHour === hour && styles.selectedPickerOptionText
                   ]}>
-                    {formatDisplayHour(hour).toString().padStart(2, '0')}
+                    {hour.toString().padStart(2, '0')}
                   </Text>
                 </TouchableOpacity>
               ))}
@@ -302,9 +314,15 @@ export default function AddMedication() {
         if (notificationDate > new Date()) {
           await Notifications.scheduleNotificationAsync({
             content: {
-              title: 'Medication Reminder',
-              body: `Time to take ${name} - ${dose}`,
-              sound: true,
+              title: '💊 Medication Reminder',
+              body: `Time to take ${name}\nDose: ${dose}\nScheduled: ${time}`,
+              sound: 'default',
+              data: {
+                medicationName: name,
+                dose: dose,
+                scheduledTime: time,
+                day: day + 1
+              },
             },
             trigger: {
               type: 'date',
@@ -314,6 +332,19 @@ export default function AddMedication() {
         }
       }
     }
+  };
+
+  const testNotification = async () => {
+    await Notifications.scheduleNotificationAsync({
+      content: {
+        title: '🔔 Test Notification',
+        body: 'This is a test notification with sound!',
+        sound: 'default',
+      },
+      trigger: {
+        seconds: 2,
+      },
+    });
   };
 
   const addMedication = async () => {
@@ -409,6 +440,10 @@ export default function AddMedication() {
 
         <TouchableOpacity style={styles.addTimeButton} onPress={addTimeSlot}>
           <Text style={styles.addTimeText}>+ Add Another Time</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.testButton} onPress={testNotification}>
+          <Text style={styles.testButtonText}>🔔 Test Notification Sound</Text>
         </TouchableOpacity>
 
         <TouchableOpacity style={styles.submitButton} onPress={addMedication}>
@@ -634,5 +669,17 @@ const styles = StyleSheet.create({
   },
   selectedPickerOptionText: {
     color: 'white',
+  },
+  testButton: {
+    backgroundColor: '#FF9500',
+    padding: 10,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginBottom: 15,
+  },
+  testButtonText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: '600',
   },
 });

@@ -31,21 +31,21 @@ export default function TabLayout() {
         name="index"
         options={{
           title: 'Medications',
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="house.fill" color={color} />,
+          tabBarIcon: ({ color }) => <IconSymbol size={28} name="pills.fill" color={color} />,
         }}
       />
       <Tabs.Screen
         name="add-medication"
         options={{
           title: 'Add',
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="plus" color={color} />,
+          tabBarIcon: ({ color }) => <IconSymbol size={28} name="plus.circle.fill" color={color} />,
         }}
       />
       <Tabs.Screen
         name="explore"
         options={{
           title: 'History',
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="paperplane.fill" color={color} />,
+          tabBarIcon: ({ color }) => <IconSymbol size={28} name="clock.fill" color={color} />,
         }}
       />
     </Tabs>

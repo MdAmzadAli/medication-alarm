@@ -134,109 +134,146 @@ export default function AddMedication() {
   };
 
   const TimePickerComponent = ({ index }: { index: number }) => {
-    const [selectedHour, setSelectedHour] = useState(8);
+    const [selectedHour, setSelectedHour] = useState(0);
     const [selectedMinute, setSelectedMinute] = useState(0);
     const [selectedPeriod, setSelectedPeriod] = useState('AM');
+    const [showHourPicker, setShowHourPicker] = useState(false);
+    const [showMinutePicker, setShowMinutePicker] = useState(false);
 
-    const hours = Array.from({ length: 12 }, (_, i) => i + 1);
-    const minutes = Array.from({ length: 12 }, (_, i) => i * 5); // 5-minute intervals
+    const hours = Array.from({ length: 12 }, (_, i) => i);
+    const minutes = Array.from({ length: 60 }, (_, i) => i);
     const periods = ['AM', 'PM'];
 
     React.useEffect(() => {
-      const time = `${selectedHour}:${selectedMinute.toString().padStart(2, '0')} ${selectedPeriod}`;
+      const displayHour = selectedHour === 0 ? 12 : selectedHour;
+      const time = `${displayHour}:${selectedMinute.toString().padStart(2, '0')} ${selectedPeriod}`;
       updateTime(index, time);
-    }, [selectedHour, selectedMinute, selectedPeriod]);
+    }, [selectedHour, selectedMinute, selectedPeriod, index]);
+
+    const formatDisplayHour = (hour: number) => {
+      return hour === 0 ? 12 : hour;
+    };
+
+    const handleHourSelect = (hour: number) => {
+      setSelectedHour(hour);
+      setShowHourPicker(false);
+    };
+
+    const handleMinuteSelect = (minute: number) => {
+      setSelectedMinute(minute);
+      setShowMinutePicker(false);
+    };
 
     return (
-      <View style={styles.inlineTimePickerContainer}>
+      <View style={styles.newTimePickerContainer}>
         <Text style={styles.timePickerLabel}>Time {index + 1}</Text>
-        <View style={styles.inlineTimePicker}>
-          {/* Hour Picker */}
-          <View style={styles.timeComponent}>
-            <Text style={styles.timeComponentLabel}>Hour</Text>
-            <View style={styles.timeScrollContainer}>
-              <ScrollView 
-                style={styles.timeScroll} 
-                showsVerticalScrollIndicator={false}
-                contentContainerStyle={styles.scrollContent}
+        
+        <View style={styles.timeDisplayContainer}>
+          {/* Hour Display */}
+          <TouchableOpacity 
+            style={styles.timeSegment}
+            onPress={() => setShowHourPicker(!showHourPicker)}
+          >
+            <Text style={styles.timeDisplayText}>
+              {formatDisplayHour(selectedHour).toString().padStart(2, '0')}
+            </Text>
+          </TouchableOpacity>
+
+          <Text style={styles.timeDisplaySeparator}>:</Text>
+
+          {/* Minute Display */}
+          <TouchableOpacity 
+            style={styles.timeSegment}
+            onPress={() => setShowMinutePicker(!showMinutePicker)}
+          >
+            <Text style={styles.timeDisplayText}>
+              {selectedMinute.toString().padStart(2, '0')}
+            </Text>
+          </TouchableOpacity>
+
+          {/* Period Toggle */}
+          <View style={styles.periodToggleContainer}>
+            {periods.map((period) => (
+              <TouchableOpacity
+                key={period}
+                style={[
+                  styles.periodToggle,
+                  selectedPeriod === period && styles.selectedPeriodToggle
+                ]}
+                onPress={() => setSelectedPeriod(period)}
               >
-                {hours.map((hour) => (
-                  <TouchableOpacity
-                    key={hour}
-                    style={[
-                      styles.timeOption,
-                      selectedHour === hour && styles.selectedTimeOption
-                    ]}
-                    onPress={() => setSelectedHour(hour)}
-                  >
-                    <Text style={[
-                      styles.timeOptionText,
-                      selectedHour === hour && styles.selectedTimeOptionText
-                    ]}>
-                      {hour}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
-            </View>
+                <Text style={[
+                  styles.periodToggleText,
+                  selectedPeriod === period && styles.selectedPeriodToggleText
+                ]}>
+                  {period}
+                </Text>
+              </TouchableOpacity>
+            ))}
           </View>
+        </View>
 
-          <Text style={styles.timeSeparator}>:</Text>
-
-          {/* Minute Picker */}
-          <View style={styles.timeComponent}>
-            <Text style={styles.timeComponentLabel}>Min</Text>
-            <View style={styles.timeScrollContainer}>
-              <ScrollView 
-                style={styles.timeScroll} 
-                showsVerticalScrollIndicator={false}
-                contentContainerStyle={styles.scrollContent}
-              >
-                {minutes.map((minute) => (
-                  <TouchableOpacity
-                    key={minute}
-                    style={[
-                      styles.timeOption,
-                      selectedMinute === minute && styles.selectedTimeOption
-                    ]}
-                    onPress={() => setSelectedMinute(minute)}
-                  >
-                    <Text style={[
-                      styles.timeOptionText,
-                      selectedMinute === minute && styles.selectedTimeOptionText
-                    ]}>
-                      {minute.toString().padStart(2, '0')}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
+        {/* Hour Picker Modal */}
+        {showHourPicker && (
+          <View style={styles.pickerModal}>
+            <View style={styles.pickerHeader}>
+              <Text style={styles.pickerTitle}>Select Hour</Text>
+              <TouchableOpacity onPress={() => setShowHourPicker(false)}>
+                <Text style={styles.pickerCloseButton}>✕</Text>
+              </TouchableOpacity>
             </View>
-          </View>
-
-          {/* Period Picker */}
-          <View style={styles.timeComponent}>
-            <Text style={styles.timeComponentLabel}>Period</Text>
-            <View style={styles.periodContainer}>
-              {periods.map((period) => (
+            <ScrollView style={styles.pickerScrollView} showsVerticalScrollIndicator={false}>
+              {hours.map((hour) => (
                 <TouchableOpacity
-                  key={period}
+                  key={hour}
                   style={[
-                    styles.periodOption,
-                    selectedPeriod === period && styles.selectedPeriodOption
+                    styles.pickerOption,
+                    selectedHour === hour && styles.selectedPickerOption
                   ]}
-                  onPress={() => setSelectedPeriod(period)}
+                  onPress={() => handleHourSelect(hour)}
                 >
                   <Text style={[
-                    styles.periodOptionText,
-                    selectedPeriod === period && styles.selectedPeriodOptionText
+                    styles.pickerOptionText,
+                    selectedHour === hour && styles.selectedPickerOptionText
                   ]}>
-                    {period}
+                    {formatDisplayHour(hour).toString().padStart(2, '0')}
                   </Text>
                 </TouchableOpacity>
               ))}
-            </View>
+            </ScrollView>
           </View>
-        </View>
+        )}
+
+        {/* Minute Picker Modal */}
+        {showMinutePicker && (
+          <View style={styles.pickerModal}>
+            <View style={styles.pickerHeader}>
+              <Text style={styles.pickerTitle}>Select Minute</Text>
+              <TouchableOpacity onPress={() => setShowMinutePicker(false)}>
+                <Text style={styles.pickerCloseButton}>✕</Text>
+              </TouchableOpacity>
+            </View>
+            <ScrollView style={styles.pickerScrollView} showsVerticalScrollIndicator={false}>
+              {minutes.map((minute) => (
+                <TouchableOpacity
+                  key={minute}
+                  style={[
+                    styles.pickerOption,
+                    selectedMinute === minute && styles.selectedPickerOption
+                  ]}
+                  onPress={() => handleMinuteSelect(minute)}
+                >
+                  <Text style={[
+                    styles.pickerOptionText,
+                    selectedMinute === minute && styles.selectedPickerOptionText
+                  ]}>
+                    {minute.toString().padStart(2, '0')}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        )}
       </View>
     );
   };
@@ -472,99 +509,130 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: 'bold',
   },
-  inlineTimePickerContainer: {
+  newTimePickerContainer: {
     marginBottom: 20,
     padding: 15,
     backgroundColor: '#f8f9fa',
     borderRadius: 10,
     borderWidth: 1,
     borderColor: '#e9ecef',
+    position: 'relative',
   },
   timePickerLabel: {
     fontSize: 16,
     fontWeight: '600',
-    marginBottom: 10,
+    marginBottom: 15,
     color: '#333',
     textAlign: 'center',
   },
-  inlineTimePicker: {
+  timeDisplayContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  timeComponent: {
-    flex: 1,
-    alignItems: 'center',
-  },
-  timeComponentLabel: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#666',
-    marginBottom: 5,
-  },
-  timeScrollContainer: {
-    height: 80,
-    width: 60,
+    justifyContent: 'center',
     backgroundColor: 'white',
     borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#ddd',
+    borderWidth: 2,
+    borderColor: '#007AFF',
+    paddingVertical: 12,
+    paddingHorizontal: 20,
   },
-  timeScroll: {
-    flex: 1,
-  },
-  scrollContent: {
+  timeSegment: {
+    paddingHorizontal: 10,
     paddingVertical: 5,
-  },
-  timeOption: {
-    height: 35,
-    justifyContent: 'center',
-    alignItems: 'center',
+    backgroundColor: '#f0f0f0',
     borderRadius: 5,
-    marginHorizontal: 5,
-    marginVertical: 2,
+    minWidth: 40,
+    alignItems: 'center',
   },
-  selectedTimeOption: {
-    backgroundColor: '#007AFF',
-  },
-  timeOptionText: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#333',
-  },
-  selectedTimeOptionText: {
-    color: 'white',
-  },
-  timeSeparator: {
-    fontSize: 24,
+  timeDisplayText: {
+    fontSize: 20,
     fontWeight: 'bold',
     color: '#333',
-    marginHorizontal: 5,
-    alignSelf: 'center',
   },
-  periodContainer: {
-    backgroundColor: 'white',
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#ddd',
-    overflow: 'hidden',
+  timeDisplaySeparator: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#333',
+    marginHorizontal: 8,
   },
-  periodOption: {
-    paddingVertical: 12,
-    paddingHorizontal: 15,
+  periodToggleContainer: {
+    marginLeft: 15,
+    flexDirection: 'column',
+  },
+  periodToggle: {
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    backgroundColor: '#f0f0f0',
+    marginVertical: 1,
+    borderRadius: 4,
     alignItems: 'center',
-    borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
+    minWidth: 32,
   },
-  selectedPeriodOption: {
+  selectedPeriodToggle: {
     backgroundColor: '#007AFF',
   },
-  periodOptionText: {
+  periodToggleText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#333',
+  },
+  selectedPeriodToggleText: {
+    color: 'white',
+  },
+  pickerModal: {
+    position: 'absolute',
+    top: 80,
+    left: 15,
+    right: 15,
+    backgroundColor: 'white',
+    borderRadius: 10,
+    maxHeight: 200,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 5,
+    zIndex: 1000,
+  },
+  pickerHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 15,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0',
+  },
+  pickerTitle: {
     fontSize: 16,
     fontWeight: '600',
     color: '#333',
   },
-  selectedPeriodOptionText: {
+  pickerCloseButton: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#666',
+    paddingHorizontal: 5,
+  },
+  pickerScrollView: {
+    maxHeight: 150,
+  },
+  pickerOption: {
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
+  },
+  selectedPickerOption: {
+    backgroundColor: '#007AFF',
+  },
+  pickerOptionText: {
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#333',
+    textAlign: 'center',
+  },
+  selectedPickerOptionText: {
     color: 'white',
   },
 });

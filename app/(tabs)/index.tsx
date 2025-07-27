@@ -49,41 +49,72 @@ export default function Home() {
       
       if (notificationData?.type === 'medication_reminder') {
         if (actionIdentifier === 'STOP_ACTION') {
-          // Stop alarm and dismiss notification
+          // Stop alarm and dismiss notification completely
           await stopAlarmSound();
           await Notifications.dismissNotificationAsync(notification.request.identifier);
+          
+          // Cancel any pending snooze alarms for this medication
+          if (notificationData.snoozeId) {
+            const allNotifications = await Notifications.getAllScheduledNotificationsAsync();
+            for (const scheduledNotif of allNotifications) {
+              if (scheduledNotif.content.data?.snoozeId === notificationData.snoozeId) {
+                await Notifications.cancelScheduledNotificationAsync(scheduledNotif.identifier);
+              }
+            }
+          }
+          
           Alert.alert(
             '✅ Alarm Stopped',
-            `Medication reminder for ${notificationData.medicationName} has been dismissed.`,
+            `Medication reminder for ${notificationData.medicationName} has been stopped completely.`,
             [{ text: 'OK' }]
           );
+          
         } else if (actionIdentifier === 'SNOOZE_ACTION') {
-          // Stop current alarm and schedule snooze
+          // Stop current alarm
           await stopAlarmSound();
           await Notifications.dismissNotificationAsync(notification.request.identifier);
           await scheduleSnoozeNotification(notificationData);
-          Alert.alert(
-            '⏰ Alarm Snoozed',
-            `${notificationData.medicationName} reminder snoozed for 2 minutes.`,
-            [{ text: 'OK' }]
-          );
+          
         } else if (actionIdentifier === 'DISMISS_ACTION') {
-          // Dismiss snoozed notification
+          // Dismiss snoozed notification permanently
           await stopAlarmSound();
           await Notifications.dismissNotificationAsync(notification.request.identifier);
+          
+          // Cancel any pending snooze alarms for this medication
+          if (notificationData.snoozeId) {
+            const allNotifications = await Notifications.getAllScheduledNotificationsAsync();
+            for (const scheduledNotif of allNotifications) {
+              if (scheduledNotif.content.data?.snoozeId === notificationData.snoozeId) {
+                await Notifications.cancelScheduledNotificationAsync(scheduledNotif.identifier);
+              }
+            }
+          }
+          
           Alert.alert(
             '✅ Reminder Dismissed',
-            `Snoozed reminder for ${notificationData.medicationName} has been dismissed.`,
+            `Snoozed reminder for ${notificationData.medicationName} has been dismissed permanently.`,
             [{ text: 'OK' }]
           );
+          
         } else {
           // Default tap action
           await stopAlarmSound();
-          Alert.alert(
-            'Medication Reminder',
-            `Time to take your ${notificationData.medicationName}!\nDose: ${notificationData.dose}`,
-            [{ text: 'Taken', onPress: () => {} }]
-          );
+          
+          if (notificationData.isSnoozeWaiting) {
+            // If it's a waiting snooze notification, show info
+            Alert.alert(
+              'Snoozed Reminder',
+              `This reminder is snoozed. It will ring again in a moment.\n\nUse "Dismiss Alarm" to stop it permanently.`,
+              [{ text: 'OK' }]
+            );
+          } else {
+            // Regular medication reminder tap
+            Alert.alert(
+              'Medication Reminder',
+              `Time to take your ${notificationData.medicationName}!\nDose: ${notificationData.dose}`,
+              [{ text: 'Taken', onPress: () => {} }]
+            );
+          }
         }
       }
     });
@@ -166,27 +197,70 @@ export default function Home() {
   };
 
   const scheduleSnoozeNotification = async (originalData: any) => {
-    const snoozeDate = new Date();
-    snoozeDate.setMinutes(snoozeDate.getMinutes() + 2);
+    const currentSnoozeCount = originalData.snoozeCount || 0;
+    
+    // Check if maximum snoozes reached
+    if (currentSnoozeCount >= 7) {
+      Alert.alert(
+        '⚠️ Maximum Snoozes Reached',
+        'You have reached the maximum number of snoozes (7) for this medication reminder. Please take your medication now.',
+        [{ text: 'OK' }]
+      );
+      return;
+    }
 
+    const newSnoozeCount = currentSnoozeCount + 1;
+    const snoozeId = `snooze_${originalData.medicationName}_${Date.now()}`;
+    
+    // Show immediate persistent notification with dismiss button
     await Notifications.scheduleNotificationAsync({
       content: {
-        title: '⏰ SNOOZED MEDICATION REMINDER!',
-        body: `💊 ${originalData.medicationName}\n📋 Dose: ${originalData.dose}\n⏰ Original Time: ${originalData.scheduledTime}\n\n🔔 Snoozed - Take your medication now!\n\nTap Dismiss to remove this reminder.`,
-        sound: true,
+        title: `⏰ SNOOZED (${newSnoozeCount}/7) - ${originalData.medicationName}`,
+        body: `💊 ${originalData.medicationName}\n📋 Dose: ${originalData.dose}\n⏰ Original Time: ${originalData.scheduledTime}\n\n😴 Snoozed for 2 minutes...\n\nUse "Dismiss Alarm" to stop this reminder permanently.`,
+        sound: false, // No alarm sound initially
         priority: 'max',
-        vibrate: [0, 250, 250, 250],
+        vibrate: [0, 100, 100],
         categoryIdentifier: 'MEDICATION_SNOOZED',
         data: {
           ...originalData,
           type: 'medication_reminder',
+          shouldPlayAlarm: false, // No alarm initially
+          isSnooze: true,
+          snoozeCount: newSnoozeCount,
+          snoozeId: snoozeId,
+          isSnoozeWaiting: true
+        },
+      },
+      trigger: {
+        seconds: 1,
+      },
+    });
+
+    // Schedule the actual alarm notification for 2 minutes later
+    const alarmDate = new Date();
+    alarmDate.setMinutes(alarmDate.getMinutes() + 2);
+
+    await Notifications.scheduleNotificationAsync({
+      content: {
+        title: `🚨 MEDICATION ALARM! (Snooze ${newSnoozeCount}/7)`,
+        body: `💊 ${originalData.medicationName}\n📋 Dose: ${originalData.dose}\n⏰ Original Time: ${originalData.scheduledTime}\n\n🔔 Time to take your medication!\n\nThis is snooze #${newSnoozeCount} of 7.`,
+        sound: true,
+        priority: 'max',
+        vibrate: [0, 250, 250, 250],
+        categoryIdentifier: 'MEDICATION_REMINDER',
+        data: {
+          ...originalData,
+          type: 'medication_reminder',
           shouldPlayAlarm: true,
-          isSnooze: true
+          isSnooze: true,
+          snoozeCount: newSnoozeCount,
+          snoozeId: snoozeId,
+          isSnoozeWaiting: false
         },
       },
       trigger: {
         type: 'date',
-        date: snoozeDate,
+        date: alarmDate,
       },
     });
   };

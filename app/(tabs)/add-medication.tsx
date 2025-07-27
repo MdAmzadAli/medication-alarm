@@ -53,21 +53,24 @@ export default function AddMedication() {
     });
 
     // Listen for notification responses to handle alarm dismissal
-    const subscription = Notifications.addNotificationResponseReceivedListener(response => {
+    const subscription = Notifications.addNotificationResponseReceivedListener(async (response) => {
       const { actionIdentifier, notification } = response;
       const notificationData = notification.request.content.data;
       
       if (notificationData?.type === 'medication_reminder') {
         if (actionIdentifier === 'STOP_ACTION') {
           // Stop alarm and dismiss notification
-          stopAlarmSound();
-          Notifications.dismissNotificationAsync(notification.request.identifier);
+          await stopAlarmSound();
+          await Notifications.dismissNotificationAsync(notification.request.identifier);
         } else if (actionIdentifier === 'SNOOZE_ACTION') {
           // Stop current alarm
-          stopAlarmSound();
+          await stopAlarmSound();
+          
+          // Dismiss current notification
+          await Notifications.dismissNotificationAsync(notification.request.identifier);
           
           // Schedule snooze notification for 2 minutes later
-          scheduleSnoozeNotification(notificationData);
+          await scheduleSnoozeNotification(notificationData);
           
           // Show feedback that alarm was snoozed
           Alert.alert(
@@ -75,9 +78,13 @@ export default function AddMedication() {
             'Your medication reminder has been snoozed for 2 minutes.',
             [{ text: 'OK' }]
           );
+        } else if (actionIdentifier === 'DISMISS_ACTION') {
+          // Dismiss snoozed notification
+          await stopAlarmSound();
+          await Notifications.dismissNotificationAsync(notification.request.identifier);
         } else {
           // Default tap action - stop alarm
-          stopAlarmSound();
+          await stopAlarmSound();
         }
       }
     });
@@ -113,6 +120,17 @@ export default function AddMedication() {
         },
       },
     ]);
+
+    // Category for snoozed notifications with dismiss option
+    await Notifications.setNotificationCategoryAsync('MEDICATION_SNOOZED', [
+      {
+        identifier: 'DISMISS_ACTION',
+        buttonTitle: '✅ Dismiss',
+        options: {
+          opensAppToForeground: false,
+        },
+      },
+    ]);
   };
 
   const scheduleSnoozeNotification = async (originalData: any) => {
@@ -122,11 +140,11 @@ export default function AddMedication() {
     await Notifications.scheduleNotificationAsync({
       content: {
         title: '⏰ SNOOZED MEDICATION REMINDER!',
-        body: `💊 ${originalData.medicationName}\n📋 Dose: ${originalData.dose}\n⏰ Original Time: ${originalData.scheduledTime}\n\n🔔 Snoozed for 2 minutes - Take your medication now!`,
+        body: `💊 ${originalData.medicationName}\n📋 Dose: ${originalData.dose}\n⏰ Original Time: ${originalData.scheduledTime}\n\n🔔 Snoozed - Take your medication now!\n\nTap Dismiss to remove this reminder.`,
         sound: true,
         priority: 'max',
         vibrate: [0, 250, 250, 250],
-        categoryIdentifier: 'MEDICATION_REMINDER',
+        categoryIdentifier: 'MEDICATION_SNOOZED',
         data: {
           ...originalData,
           type: 'medication_reminder',
@@ -482,13 +500,21 @@ export default function AddMedication() {
 
   const [alarmSound, setAlarmSound] = useState<Audio.Sound | null>(null);
 
+  // Global reference for alarm sound management
+  React.useRef<Audio.Sound | null>(null);
+  const globalAlarmSound = React.useRef<Audio.Sound | null>(null);
+
   const playAlarmSound = async () => {
     try {
+      // Stop any existing alarm first
+      await stopAlarmSound();
+      
       const { sound } = await Audio.Sound.createAsync(
         { uri: 'https://www.soundjay.com/misc/sounds/bell-ringing-05.wav' },
         { shouldPlay: true, isLooping: true, volume: 1.0 }
       );
       setAlarmSound(sound);
+      globalAlarmSound.current = sound;
     } catch (error) {
       console.log('Error playing alarm sound:', error);
     }
@@ -496,10 +522,18 @@ export default function AddMedication() {
 
   const stopAlarmSound = async () => {
     try {
+      // Stop the current state alarm
       if (alarmSound) {
         await alarmSound.stopAsync();
         await alarmSound.unloadAsync();
         setAlarmSound(null);
+      }
+      
+      // Stop the global reference alarm
+      if (globalAlarmSound.current) {
+        await globalAlarmSound.current.stopAsync();
+        await globalAlarmSound.current.unloadAsync();
+        globalAlarmSound.current = null;
       }
     } catch (error) {
       console.log('Error stopping alarm sound:', error);
@@ -507,10 +541,7 @@ export default function AddMedication() {
   };
 
   const testNotification = async () => {
-    // Test the alarm sound
-    await playAlarmSound();
-    
-    // Show notification with action buttons
+    // Show notification with action buttons first
     await Notifications.scheduleNotificationAsync({
       content: {
         title: '🔔 MEDICATION ALARM TEST!',
@@ -530,9 +561,14 @@ export default function AddMedication() {
         },
       },
       trigger: {
-        seconds: 2,
+        seconds: 1,
       },
     });
+
+    // Start alarm sound after a short delay to sync with notification
+    setTimeout(async () => {
+      await playAlarmSound();
+    }, 1000);
 
     // Auto-stop after 30 seconds if not manually stopped
     setTimeout(() => {

@@ -28,6 +28,9 @@ export default function Home() {
   const [medications, setMedications] = useState<Medication[]>([]);
   const [alarmSound, setAlarmSound] = useState<Audio.Sound | null>(null);
 
+  // Global reference for alarm sound management
+  const globalAlarmSound = React.useRef<Audio.Sound | null>(null);
+
   useEffect(() => {
     loadMedications();
     setupNotificationCategories();
@@ -40,15 +43,15 @@ export default function Home() {
     });
 
     // Listen for notification interactions
-    const responseListener = Notifications.addNotificationResponseReceivedListener(response => {
+    const responseListener = Notifications.addNotificationResponseReceivedListener(async (response) => {
       const { actionIdentifier, notification } = response;
       const notificationData = notification.request.content.data;
       
       if (notificationData?.type === 'medication_reminder') {
         if (actionIdentifier === 'STOP_ACTION') {
           // Stop alarm and dismiss notification
-          stopAlarmSound();
-          Notifications.dismissNotificationAsync(notification.request.identifier);
+          await stopAlarmSound();
+          await Notifications.dismissNotificationAsync(notification.request.identifier);
           Alert.alert(
             '✅ Alarm Stopped',
             `Medication reminder for ${notificationData.medicationName} has been dismissed.`,
@@ -56,16 +59,26 @@ export default function Home() {
           );
         } else if (actionIdentifier === 'SNOOZE_ACTION') {
           // Stop current alarm and schedule snooze
-          stopAlarmSound();
-          scheduleSnoozeNotification(notificationData);
+          await stopAlarmSound();
+          await Notifications.dismissNotificationAsync(notification.request.identifier);
+          await scheduleSnoozeNotification(notificationData);
           Alert.alert(
             '⏰ Alarm Snoozed',
             `${notificationData.medicationName} reminder snoozed for 2 minutes.`,
             [{ text: 'OK' }]
           );
+        } else if (actionIdentifier === 'DISMISS_ACTION') {
+          // Dismiss snoozed notification
+          await stopAlarmSound();
+          await Notifications.dismissNotificationAsync(notification.request.identifier);
+          Alert.alert(
+            '✅ Reminder Dismissed',
+            `Snoozed reminder for ${notificationData.medicationName} has been dismissed.`,
+            [{ text: 'OK' }]
+          );
         } else {
           // Default tap action
-          stopAlarmSound();
+          await stopAlarmSound();
           Alert.alert(
             'Medication Reminder',
             `Time to take your ${notificationData.medicationName}!\nDose: ${notificationData.dose}`,
@@ -83,11 +96,15 @@ export default function Home() {
 
   const playAlarmSound = async () => {
     try {
+      // Stop any existing alarm first
+      await stopAlarmSound();
+      
       const { sound } = await Audio.Sound.createAsync(
         { uri: 'https://www.soundjay.com/misc/sounds/bell-ringing-05.wav' },
         { shouldPlay: true, isLooping: true, volume: 1.0 }
       );
       setAlarmSound(sound);
+      globalAlarmSound.current = sound;
 
       // Auto-stop after 60 seconds
       setTimeout(() => {
@@ -100,10 +117,18 @@ export default function Home() {
 
   const stopAlarmSound = async () => {
     try {
+      // Stop the current state alarm
       if (alarmSound) {
         await alarmSound.stopAsync();
         await alarmSound.unloadAsync();
         setAlarmSound(null);
+      }
+      
+      // Stop the global reference alarm
+      if (globalAlarmSound.current) {
+        await globalAlarmSound.current.stopAsync();
+        await globalAlarmSound.current.unloadAsync();
+        globalAlarmSound.current = null;
       }
     } catch (error) {
       console.log('Error stopping alarm sound:', error);
@@ -127,6 +152,17 @@ export default function Home() {
         },
       },
     ]);
+
+    // Category for snoozed notifications with dismiss option
+    await Notifications.setNotificationCategoryAsync('MEDICATION_SNOOZED', [
+      {
+        identifier: 'DISMISS_ACTION',
+        buttonTitle: '✅ Dismiss',
+        options: {
+          opensAppToForeground: false,
+        },
+      },
+    ]);
   };
 
   const scheduleSnoozeNotification = async (originalData: any) => {
@@ -136,11 +172,11 @@ export default function Home() {
     await Notifications.scheduleNotificationAsync({
       content: {
         title: '⏰ SNOOZED MEDICATION REMINDER!',
-        body: `💊 ${originalData.medicationName}\n📋 Dose: ${originalData.dose}\n⏰ Original Time: ${originalData.scheduledTime}\n\n🔔 Snoozed - Take your medication now!`,
+        body: `💊 ${originalData.medicationName}\n📋 Dose: ${originalData.dose}\n⏰ Original Time: ${originalData.scheduledTime}\n\n🔔 Snoozed - Take your medication now!\n\nTap Dismiss to remove this reminder.`,
         sound: true,
         priority: 'max',
         vibrate: [0, 250, 250, 250],
-        categoryIdentifier: 'MEDICATION_REMINDER',
+        categoryIdentifier: 'MEDICATION_SNOOZED',
         data: {
           ...originalData,
           type: 'medication_reminder',

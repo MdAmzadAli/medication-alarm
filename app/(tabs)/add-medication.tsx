@@ -82,11 +82,11 @@ export default function AddMedication() {
           );
           
         } else if (actionIdentifier === 'SNOOZE_ACTION') {
-          // Dismiss current notification
-          await Notifications.dismissNotificationAsync(notification.request.identifier);
+          // Don't dismiss - we'll modify the current notification
+          const currentNotificationId = notification.request.identifier;
           
-          // Schedule snooze notification sequence
-          await scheduleSnoozeNotification(notificationData);
+          // Schedule snooze notification sequence using the same notification ID
+          await scheduleSnoozeNotification(notificationData, currentNotificationId);
           
         } else if (actionIdentifier === 'DISMISS_ACTION') {
           // Dismiss snoozed notification permanently
@@ -173,7 +173,7 @@ export default function AddMedication() {
     ]);
   };
 
-  const scheduleSnoozeNotification = async (originalData: any) => {
+  const scheduleSnoozeNotification = async (originalData: any, currentNotificationId: string) => {
     const currentSnoozeCount = originalData.snoozeCount || 0;
     
     // Check if maximum snoozes reached
@@ -187,22 +187,18 @@ export default function AddMedication() {
     }
 
     const newSnoozeCount = currentSnoozeCount + 1;
-    const snoozeId = `snooze_${originalData.medicationName}_${Date.now()}`;
+    const snoozeId = originalData.snoozeId || `snooze_${originalData.medicationName}_${Date.now()}`;
     
-    // Schedule ONLY ONE notification for 2 minutes later that will show the waiting state initially
-    // and then become an active alarm after 2 minutes
-    const alarmDate = new Date();
-    alarmDate.setMinutes(alarmDate.getMinutes() + 2);
-
-    // First, show the immediate snoozed notification with dismiss option
-    const snoozeNotificationId = await Notifications.scheduleNotificationAsync({
+    // Update the current notification to show snoozed state with only dismiss button
+    await Notifications.scheduleNotificationAsync({
+      identifier: currentNotificationId, // Reuse the same notification ID
       content: {
         title: `⏰ SNOOZED (${newSnoozeCount}/7) - ${originalData.medicationName}`,
-        body: `💊 ${originalData.medicationName}\n📋 Dose: ${originalData.dose}\n⏰ Original Time: ${originalData.scheduledTime}\n\n😴 Snoozed for 2 minutes...\n\nUse "Dismiss Alarm" to stop this reminder permanently.`,
-        sound: false, // No alarm sound initially
+        body: `💊 ${originalData.medicationName}\n📋 Dose: ${originalData.dose}\n⏰ Original Time: ${originalData.scheduledTime}\n\n😴 Snoozed for 2 minutes...\n\nUse "Dismiss" to stop this reminder permanently.`,
+        sound: false, // No alarm sound while snoozed
         priority: 'max',
         vibrate: [0, 100, 100],
-        categoryIdentifier: 'MEDICATION_SNOOZED',
+        categoryIdentifier: 'MEDICATION_SNOOZED', // Shows only dismiss button
         data: {
           ...originalData,
           type: 'medication_reminder',
@@ -210,7 +206,8 @@ export default function AddMedication() {
           isSnooze: true,
           snoozeCount: newSnoozeCount,
           snoozeId: snoozeId,
-          isSnoozeWaiting: true
+          isSnoozeWaiting: true,
+          originalNotificationId: currentNotificationId
         },
       },
       trigger: {
@@ -218,21 +215,19 @@ export default function AddMedication() {
       },
     });
 
-    // Schedule a notification to replace the snoozed one after 2 minutes
+    // Schedule the same notification to transform back to original state after 2 minutes
     setTimeout(async () => {
       try {
-        // Dismiss the waiting notification
-        await Notifications.dismissNotificationAsync(snoozeNotificationId);
-        
-        // Show the active alarm notification
+        // Update the same notification back to original alarm state
         await Notifications.scheduleNotificationAsync({
+          identifier: currentNotificationId, // Same notification ID
           content: {
             title: `🚨 MEDICATION ALARM! (Snooze ${newSnoozeCount}/7)`,
             body: `💊 ${originalData.medicationName}\n📋 Dose: ${originalData.dose}\n⏰ Original Time: ${originalData.scheduledTime}\n\n🔔 Time to take your medication!\n\nThis is snooze #${newSnoozeCount} of 7.`,
             sound: true,
             priority: 'max',
             vibrate: [0, 250, 250, 250],
-            categoryIdentifier: 'MEDICATION_REMINDER',
+            categoryIdentifier: 'MEDICATION_REMINDER', // Shows stop/snooze buttons
             data: {
               ...originalData,
               type: 'medication_reminder',
@@ -240,7 +235,8 @@ export default function AddMedication() {
               isSnooze: true,
               snoozeCount: newSnoozeCount,
               snoozeId: snoozeId,
-              isSnoozeWaiting: false
+              isSnoozeWaiting: false,
+              originalNotificationId: currentNotificationId
             },
           },
           trigger: {

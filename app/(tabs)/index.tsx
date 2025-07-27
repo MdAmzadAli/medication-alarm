@@ -30,6 +30,7 @@ export default function Home() {
 
   useEffect(() => {
     loadMedications();
+    setupNotificationCategories();
 
     // Listen for notifications when app is in foreground
     const notificationListener = Notifications.addNotificationReceivedListener(notification => {
@@ -40,13 +41,37 @@ export default function Home() {
 
     // Listen for notification interactions
     const responseListener = Notifications.addNotificationResponseReceivedListener(response => {
-      if (response.notification.request.content.data?.type === 'medication_reminder') {
-        stopAlarmSound();
-        Alert.alert(
-          'Medication Reminder',
-          `Time to take your ${response.notification.request.content.data.medicationName}!\nDose: ${response.notification.request.content.data.dose}`,
-          [{ text: 'Taken', onPress: () => {} }]
-        );
+      const { actionIdentifier, notification } = response;
+      const notificationData = notification.request.content.data;
+      
+      if (notificationData?.type === 'medication_reminder') {
+        if (actionIdentifier === 'STOP_ACTION') {
+          // Stop alarm and dismiss notification
+          stopAlarmSound();
+          Notifications.dismissNotificationAsync(notification.request.identifier);
+          Alert.alert(
+            '✅ Alarm Stopped',
+            `Medication reminder for ${notificationData.medicationName} has been dismissed.`,
+            [{ text: 'OK' }]
+          );
+        } else if (actionIdentifier === 'SNOOZE_ACTION') {
+          // Stop current alarm and schedule snooze
+          stopAlarmSound();
+          scheduleSnoozeNotification(notificationData);
+          Alert.alert(
+            '⏰ Alarm Snoozed',
+            `${notificationData.medicationName} reminder snoozed for 2 minutes.`,
+            [{ text: 'OK' }]
+          );
+        } else {
+          // Default tap action
+          stopAlarmSound();
+          Alert.alert(
+            'Medication Reminder',
+            `Time to take your ${notificationData.medicationName}!\nDose: ${notificationData.dose}`,
+            [{ text: 'Taken', onPress: () => {} }]
+          );
+        }
       }
     });
 
@@ -83,6 +108,51 @@ export default function Home() {
     } catch (error) {
       console.log('Error stopping alarm sound:', error);
     }
+  };
+
+  const setupNotificationCategories = async () => {
+    await Notifications.setNotificationCategoryAsync('MEDICATION_REMINDER', [
+      {
+        identifier: 'STOP_ACTION',
+        buttonTitle: '🛑 Stop',
+        options: {
+          opensAppToForeground: false,
+        },
+      },
+      {
+        identifier: 'SNOOZE_ACTION',
+        buttonTitle: '😴 Snooze 2min',
+        options: {
+          opensAppToForeground: false,
+        },
+      },
+    ]);
+  };
+
+  const scheduleSnoozeNotification = async (originalData: any) => {
+    const snoozeDate = new Date();
+    snoozeDate.setMinutes(snoozeDate.getMinutes() + 2);
+
+    await Notifications.scheduleNotificationAsync({
+      content: {
+        title: '⏰ SNOOZED MEDICATION REMINDER!',
+        body: `💊 ${originalData.medicationName}\n📋 Dose: ${originalData.dose}\n⏰ Original Time: ${originalData.scheduledTime}\n\n🔔 Snoozed - Take your medication now!`,
+        sound: true,
+        priority: 'max',
+        vibrate: [0, 250, 250, 250],
+        categoryIdentifier: 'MEDICATION_REMINDER',
+        data: {
+          ...originalData,
+          type: 'medication_reminder',
+          shouldPlayAlarm: true,
+          isSnooze: true
+        },
+      },
+      trigger: {
+        type: 'date',
+        date: snoozeDate,
+      },
+    });
   };
 
   const loadMedications = async () => {

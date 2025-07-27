@@ -41,6 +41,7 @@ export default function AddMedication() {
 
   React.useEffect(() => {
     requestNotificationPermissions();
+    setupNotificationCategories();
     
     // Configure notification handler for continuous alarm
     Notifications.setNotificationHandler({
@@ -53,9 +54,31 @@ export default function AddMedication() {
 
     // Listen for notification responses to handle alarm dismissal
     const subscription = Notifications.addNotificationResponseReceivedListener(response => {
-      if (response.notification.request.content.data?.type === 'medication_reminder') {
-        // Stop alarm when user interacts with notification
-        stopAlarmSound();
+      const { actionIdentifier, notification } = response;
+      const notificationData = notification.request.content.data;
+      
+      if (notificationData?.type === 'medication_reminder') {
+        if (actionIdentifier === 'STOP_ACTION') {
+          // Stop alarm and dismiss notification
+          stopAlarmSound();
+          Notifications.dismissNotificationAsync(notification.request.identifier);
+        } else if (actionIdentifier === 'SNOOZE_ACTION') {
+          // Stop current alarm
+          stopAlarmSound();
+          
+          // Schedule snooze notification for 2 minutes later
+          scheduleSnoozeNotification(notificationData);
+          
+          // Show feedback that alarm was snoozed
+          Alert.alert(
+            '⏰ Alarm Snoozed',
+            'Your medication reminder has been snoozed for 2 minutes.',
+            [{ text: 'OK' }]
+          );
+        } else {
+          // Default tap action - stop alarm
+          stopAlarmSound();
+        }
       }
     });
 
@@ -71,6 +94,51 @@ export default function AddMedication() {
         [{ text: 'OK' }]
       );
     }
+  };
+
+  const setupNotificationCategories = async () => {
+    await Notifications.setNotificationCategoryAsync('MEDICATION_REMINDER', [
+      {
+        identifier: 'STOP_ACTION',
+        buttonTitle: '🛑 Stop',
+        options: {
+          opensAppToForeground: false,
+        },
+      },
+      {
+        identifier: 'SNOOZE_ACTION',
+        buttonTitle: '😴 Snooze 2min',
+        options: {
+          opensAppToForeground: false,
+        },
+      },
+    ]);
+  };
+
+  const scheduleSnoozeNotification = async (originalData: any) => {
+    const snoozeDate = new Date();
+    snoozeDate.setMinutes(snoozeDate.getMinutes() + 2);
+
+    await Notifications.scheduleNotificationAsync({
+      content: {
+        title: '⏰ SNOOZED MEDICATION REMINDER!',
+        body: `💊 ${originalData.medicationName}\n📋 Dose: ${originalData.dose}\n⏰ Original Time: ${originalData.scheduledTime}\n\n🔔 Snoozed for 2 minutes - Take your medication now!`,
+        sound: true,
+        priority: 'max',
+        vibrate: [0, 250, 250, 250],
+        categoryIdentifier: 'MEDICATION_REMINDER',
+        data: {
+          ...originalData,
+          type: 'medication_reminder',
+          shouldPlayAlarm: true,
+          isSnooze: true
+        },
+      },
+      trigger: {
+        type: 'date',
+        date: snoozeDate,
+      },
+    });
   };
 
   const pickImage = async () => {
@@ -356,7 +424,7 @@ export default function AddMedication() {
     );
   };
 
-  const scheduleNotifications = async (medication: Medication) => {
+  const scheduleNotifications = async (medication: Medication, isSnooze = false, snoozeMinutes = 0) => {
     const { name, dose, scheduledTimes, duration } = medication;
 
     for (let day = 0; day < duration; day++) {
@@ -376,15 +444,21 @@ export default function AddMedication() {
         notificationDate.setDate(notificationDate.getDate() + day);
         notificationDate.setHours(hour24, minutes, 0, 0);
 
+        // Add snooze time if this is a snooze notification
+        if (isSnooze) {
+          notificationDate.setMinutes(notificationDate.getMinutes() + snoozeMinutes);
+        }
+
         // Only schedule future notifications
         if (notificationDate > new Date()) {
           await Notifications.scheduleNotificationAsync({
             content: {
-              title: '🚨 MEDICATION ALARM! 🚨',
-              body: `💊 ${name}\n📋 Dose: ${dose}\n⏰ Time: ${time}\n📅 Day ${day + 1} of ${duration}\n\n🔔 TAP TO STOP ALARM`,
+              title: isSnooze ? '⏰ MEDICATION SNOOZE REMINDER!' : '🚨 MEDICATION ALARM! 🚨',
+              body: `💊 ${name}\n📋 Dose: ${dose}\n⏰ Time: ${time}${isSnooze ? ' (Snoozed)' : ''}\n📅 Day ${day + 1} of ${duration}`,
               sound: true,
               priority: 'max',
               vibrate: [0, 250, 250, 250],
+              categoryIdentifier: 'MEDICATION_REMINDER',
               data: {
                 medicationName: name,
                 dose: dose,
@@ -392,7 +466,8 @@ export default function AddMedication() {
                 day: day + 1,
                 duration: duration,
                 type: 'medication_reminder',
-                shouldPlayAlarm: true
+                shouldPlayAlarm: true,
+                isSnooze: isSnooze
               },
             },
             trigger: {
@@ -435,17 +510,23 @@ export default function AddMedication() {
     // Test the alarm sound
     await playAlarmSound();
     
-    // Show notification
+    // Show notification with action buttons
     await Notifications.scheduleNotificationAsync({
       content: {
         title: '🔔 MEDICATION ALARM TEST!',
-        body: '💊 Test Medicine\n📋 Dose: 1 tablet\n⏰ Time: Now\nTap to stop alarm!',
+        body: '💊 Test Medicine\n📋 Dose: 1 tablet\n⏰ Time: Now\n\nUse the buttons below to test Stop/Snooze',
         sound: true,
         priority: 'high',
         vibrate: [0, 250, 250, 250],
+        categoryIdentifier: 'MEDICATION_REMINDER',
         data: {
           type: 'medication_reminder',
           medicationName: 'Test Medicine',
+          dose: '1 tablet',
+          scheduledTime: 'Now',
+          day: 1,
+          duration: 1,
+          shouldPlayAlarm: true
         },
       },
       trigger: {

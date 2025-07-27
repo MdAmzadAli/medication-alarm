@@ -154,9 +154,22 @@ export default function AddMedication() {
   };
 
   const TimePickerComponent = ({ index }: { index: number }) => {
-    const [selectedHour, setSelectedHour] = useState(12);
-    const [selectedMinute, setSelectedMinute] = useState(0);
-    const [selectedPeriod, setSelectedPeriod] = useState('AM');
+    const currentTime = formData.times[index] || '';
+    
+    // Parse current time or use defaults
+    const parseTime = (timeString: string) => {
+      if (!timeString) return { hour: 12, minute: 0, period: 'AM' };
+      
+      const [timePart, period] = timeString.split(' ');
+      const [hourStr, minuteStr] = timePart.split(':');
+      return {
+        hour: parseInt(hourStr) || 12,
+        minute: parseInt(minuteStr) || 0,
+        period: period || 'AM'
+      };
+    };
+
+    const { hour: selectedHour, minute: selectedMinute, period: selectedPeriod } = parseTime(currentTime);
     const [showHourPicker, setShowHourPicker] = useState(false);
     const [showMinutePicker, setShowMinutePicker] = useState(false);
 
@@ -166,21 +179,18 @@ export default function AddMedication() {
 
     // Update time and close picker
     const handleHourSelect = (hour: number) => {
-      setSelectedHour(hour);
       const time = `${hour}:${selectedMinute.toString().padStart(2, '0')} ${selectedPeriod}`;
       updateTime(index, time);
       setShowHourPicker(false);
     };
 
     const handleMinuteSelect = (minute: number) => {
-      setSelectedMinute(minute);
       const time = `${selectedHour}:${minute.toString().padStart(2, '0')} ${selectedPeriod}`;
       updateTime(index, time);
       setShowMinutePicker(false);
     };
 
     const handlePeriodSelect = (period: string) => {
-      setSelectedPeriod(period);
       const time = `${selectedHour}:${selectedMinute.toString().padStart(2, '0')} ${period}`;
       updateTime(index, time);
     };

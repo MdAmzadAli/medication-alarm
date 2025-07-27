@@ -1,8 +1,8 @@
-entrypoint = "README.md"
-modules = ["nodejs-20"]
+modules = ["nodejs-20", "nix"]
+run = "npm run start"
 
 [nix]
-channel = "stable-24_05"
+channel = "stable-25_05"
 
 [[ports]]
 localPort = 8081
@@ -54,3 +54,6 @@ mode = "sequential"
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "npx eas build --platform android --profile preview"
+
+[deployment]
+run = ["sh", "-c", "npm run start"]

@@ -28,8 +28,13 @@ export default function Home() {
   const [medications, setMedications] = useState<Medication[]>([]);
   const [alarmSound, setAlarmSound] = useState<Audio.Sound | null>(null);
 
-  // Global reference for alarm sound management
+  // Global reference for alarm sound management - shared across app
   const globalAlarmSound = React.useRef<Audio.Sound | null>(null);
+  
+  // Make alarm sound management globally accessible
+  const setGlobalAlarmSound = (sound: Audio.Sound | null) => {
+    globalAlarmSound.current = sound;
+  };
 
   useEffect(() => {
     loadMedications();
@@ -48,8 +53,10 @@ export default function Home() {
       const notificationData = notification.request.content.data;
       
       if (notificationData?.type === 'medication_reminder') {
-        // IMMEDIATELY stop the alarm sound first, regardless of action
+        // IMMEDIATELY stop ALL alarm sounds first, regardless of action
         stopAlarmSoundImmediate();
+        // Also stop any alarm from add-medication component
+        stopAllGlobalAlarms();
         
         if (actionIdentifier === 'STOP_ACTION') {
           // Stop alarm and dismiss notification completely
@@ -134,9 +141,26 @@ export default function Home() {
       );
       setAlarmSound(sound);
       globalAlarmSound.current = sound;
+      
+      // Store global reference in AsyncStorage for cross-component access
+      AsyncStorage.setItem('stopAlarmFlag', 'false').catch(() => {});
+
+      // Monitor for stop flag from other components
+      const checkStopFlag = () => {
+        AsyncStorage.getItem('stopAlarmFlag').then(flag => {
+          if (flag === 'true') {
+            stopAlarmSoundImmediate();
+            AsyncStorage.setItem('stopAlarmFlag', 'false').catch(() => {});
+          }
+        }).catch(() => {});
+      };
+      
+      // Check every 100ms for immediate response
+      const stopFlagInterval = setInterval(checkStopFlag, 100);
 
       // Auto-stop after 60 seconds
       setTimeout(() => {
+        clearInterval(stopFlagInterval);
         stopAlarmSound();
       }, 60000);
     } catch (error) {
@@ -144,23 +168,33 @@ export default function Home() {
     }
   };
 
-  const stopAlarmSoundImmediate = () => {
-    // Immediate synchronous stop without await to prevent delays
+  const stopAllGlobalAlarms = () => {
+    // Stop all possible alarm instances immediately
     try {
+      // Stop current component alarm
       if (alarmSound) {
         alarmSound.stopAsync().catch(() => {});
         alarmSound.unloadAsync().catch(() => {});
         setAlarmSound(null);
       }
       
+      // Stop global alarm reference
       if (globalAlarmSound.current) {
         globalAlarmSound.current.stopAsync().catch(() => {});
         globalAlarmSound.current.unloadAsync().catch(() => {});
         globalAlarmSound.current = null;
       }
+      
+      // Also attempt to stop any alarm from AsyncStorage if needed
+      AsyncStorage.setItem('stopAlarmFlag', 'true').catch(() => {});
     } catch (error) {
-      console.log('Error stopping alarm sound immediately:', error);
+      console.log('Error stopping all alarms:', error);
     }
+  };
+
+  const stopAlarmSoundImmediate = () => {
+    // Immediate synchronous stop without await to prevent delays
+    stopAllGlobalAlarms();
   };
 
   const stopAlarmSound = async () => {
@@ -257,11 +291,12 @@ export default function Home() {
         trigger: { seconds: 1 },
       });
 
-      // After 2 minutes, update the same notification to alarm state
+      // After 2 minutes, update the same notification to alarm state with FULL functionality
       setTimeout(async () => {
         try {
           await Notifications.dismissNotificationAsync(currentNotificationId);
           
+          // Restore full notification with ALL original buttons
           await Notifications.scheduleNotificationAsync({
             identifier: currentNotificationId, // Same ID to replace existing
             content: {
@@ -270,7 +305,7 @@ export default function Home() {
               sound: true,
               priority: 'max',
               vibrate: [0, 250, 250, 250],
-              categoryIdentifier: 'MEDICATION_REMINDER',
+              categoryIdentifier: 'MEDICATION_REMINDER', // Use original category for full buttons
               data: {
                 ...originalData,
                 type: 'medication_reminder',

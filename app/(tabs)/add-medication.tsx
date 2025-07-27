@@ -141,11 +141,12 @@ export default function AddMedication() {
         trigger: { seconds: 1 },
       });
 
-      // After 2 minutes, update the same notification to alarm state
+      // After 2 minutes, update the same notification to alarm state with FULL functionality
       setTimeout(async () => {
         try {
           await Notifications.dismissNotificationAsync(currentNotificationId);
           
+          // Restore full notification with ALL original buttons
           await Notifications.scheduleNotificationAsync({
             identifier: currentNotificationId, // Same ID again
             content: {
@@ -154,7 +155,7 @@ export default function AddMedication() {
               sound: true,
               priority: 'max',
               vibrate: [0, 250, 250, 250],
-              categoryIdentifier: 'MEDICATION_REMINDER',
+              categoryIdentifier: 'MEDICATION_REMINDER', // Use original category for full buttons
               data: {
                 ...originalData,
                 type: 'medication_reminder',
@@ -536,28 +537,58 @@ export default function AddMedication() {
       );
       setAlarmSound(sound);
       globalAlarmSound.current = sound;
+      
+      // Monitor for stop flag from other components
+      const checkStopFlag = () => {
+        AsyncStorage.getItem('stopAlarmFlag').then(flag => {
+          if (flag === 'true') {
+            stopAlarmSoundImmediate();
+            AsyncStorage.setItem('stopAlarmFlag', 'false').catch(() => {});
+          }
+        }).catch(() => {});
+      };
+      
+      // Check every 100ms for immediate response
+      const stopFlagInterval = setInterval(checkStopFlag, 100);
+      
+      // Clear interval after 60 seconds
+      setTimeout(() => {
+        clearInterval(stopFlagInterval);
+        stopAlarmSound();
+      }, 60000);
+      
     } catch (error) {
       console.log('Error playing alarm sound:', error);
     }
   };
 
-  const stopAlarmSoundImmediate = () => {
-    // Immediate synchronous stop without await to prevent delays
+  const stopAllGlobalAlarms = () => {
+    // Stop all possible alarm instances immediately
     try {
+      // Stop current component alarm
       if (alarmSound) {
         alarmSound.stopAsync().catch(() => {});
         alarmSound.unloadAsync().catch(() => {});
         setAlarmSound(null);
       }
       
+      // Stop global alarm reference
       if (globalAlarmSound.current) {
         globalAlarmSound.current.stopAsync().catch(() => {});
         globalAlarmSound.current.unloadAsync().catch(() => {});
         globalAlarmSound.current = null;
       }
+      
+      // Set flag to stop alarms across components
+      AsyncStorage.setItem('stopAlarmFlag', 'true').catch(() => {});
     } catch (error) {
-      console.log('Error stopping alarm sound immediately:', error);
+      console.log('Error stopping all alarms:', error);
     }
+  };
+
+  const stopAlarmSoundImmediate = () => {
+    // Immediate synchronous stop without await to prevent delays
+    stopAllGlobalAlarms();
   };
 
   const stopAlarmSound = async () => {

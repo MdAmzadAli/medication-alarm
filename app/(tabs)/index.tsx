@@ -173,15 +173,23 @@ export default function Home() {
     try {
       // Stop current component alarm
       if (alarmSound) {
-        alarmSound.stopAsync().catch(() => {});
-        alarmSound.unloadAsync().catch(() => {});
+        alarmSound.getStatusAsync().then(status => {
+          if (status.isLoaded) {
+            alarmSound.stopAsync().catch(() => {});
+            alarmSound.unloadAsync().catch(() => {});
+          }
+        }).catch(() => {});
         setAlarmSound(null);
       }
       
       // Stop global alarm reference
       if (globalAlarmSound.current) {
-        globalAlarmSound.current.stopAsync().catch(() => {});
-        globalAlarmSound.current.unloadAsync().catch(() => {});
+        globalAlarmSound.current.getStatusAsync().then(status => {
+          if (status.isLoaded) {
+            globalAlarmSound.current.stopAsync().catch(() => {});
+            globalAlarmSound.current.unloadAsync().catch(() => {});
+          }
+        }).catch(() => {});
         globalAlarmSound.current = null;
       }
       
@@ -201,15 +209,21 @@ export default function Home() {
     try {
       // Stop the current state alarm
       if (alarmSound) {
-        await alarmSound.stopAsync();
-        await alarmSound.unloadAsync();
+        const status = await alarmSound.getStatusAsync();
+        if (status.isLoaded) {
+          await alarmSound.stopAsync();
+          await alarmSound.unloadAsync();
+        }
         setAlarmSound(null);
       }
       
       // Stop the global reference alarm
       if (globalAlarmSound.current) {
-        await globalAlarmSound.current.stopAsync();
-        await globalAlarmSound.current.unloadAsync();
+        const status = await globalAlarmSound.current.getStatusAsync();
+        if (status.isLoaded) {
+          await globalAlarmSound.current.stopAsync();
+          await globalAlarmSound.current.unloadAsync();
+        }
         globalAlarmSound.current = null;
       }
     } catch (error) {

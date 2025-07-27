@@ -9,7 +9,21 @@
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "UIBackgroundModes": ["background-processing"]
+      }
+    },
+    "android": {
+      "permissions": [
+        "RECEIVE_BOOT_COMPLETED",
+        "WAKE_LOCK",
+        "VIBRATE"
+      ]
+    },
+    "notification": {
+      "icon": "./assets/images/icon.png",
+      "color": "#ffffff"
     },
     "android": {
       "adaptiveIcon": {

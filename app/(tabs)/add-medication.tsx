@@ -9,6 +9,7 @@ import {
   Alert,
   Image,
   StyleSheet,
+  Platform,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import * as Notifications from 'expo-notifications';
@@ -35,6 +36,21 @@ export default function AddMedication() {
     duration: 7,
     imageUri: '',
   });
+
+  React.useEffect(() => {
+    requestNotificationPermissions();
+  }, []);
+
+  const requestNotificationPermissions = async () => {
+    const { status } = await Notifications.requestPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert(
+        'Notification Permission',
+        'Please enable notifications to receive medication reminders.',
+        [{ text: 'OK' }]
+      );
+    }
+  };
 
   const pickImage = async () => {
     Alert.alert(
@@ -109,24 +125,78 @@ export default function AddMedication() {
     setFormData({ ...formData, times: newTimes });
   };
 
+  const formatTime = (hours: number, minutes: number) => {
+    const period = hours >= 12 ? 'PM' : 'AM';
+    const displayHours = hours === 0 ? 12 : hours > 12 ? hours - 12 : hours;
+    const displayMinutes = minutes.toString().padStart(2, '0');
+    return `${displayHours}:${displayMinutes} ${period}`;
+  };
+
+  const showTimePicker = (index: number) => {
+    const now = new Date();
+    const currentTime = formatTime(now.getHours(), now.getMinutes());
+    
+    Alert.prompt(
+      'Enter Time',
+      'Enter time in HH:MM AM/PM format',
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+        {
+          text: 'Set',
+          onPress: (text) => {
+            if (text) {
+              const timePattern = /^(0?[1-9]|1[0-2]):[0-5][0-9] (AM|PM)$/;
+              if (timePattern.test(text.toUpperCase())) {
+                updateTime(index, text.toUpperCase());
+              } else {
+                Alert.alert('Invalid Format', 'Please enter time in format: H:MM AM/PM');
+              }
+            }
+          },
+        },
+      ],
+      'plain-text',
+      currentTime
+    );
+  };
+
   const scheduleNotifications = async (medication: Medication) => {
-    const { name, dose, scheduledTimes, duration, startDate } = medication;
+    const { name, dose, scheduledTimes, duration } = medication;
 
     for (let day = 0; day < duration; day++) {
       for (const time of scheduledTimes) {
-        const [hours, minutes] = time.split(':').map(Number);
-        const notificationDate = new Date(startDate);
-        notificationDate.setDate(notificationDate.getDate() + day);
-        notificationDate.setHours(hours, minutes, 0, 0);
+        const [timePart, period] = time.split(' ');
+        const [hours, minutes] = timePart.split(':').map(Number);
+        
+        // Convert to 24-hour format
+        let hour24 = hours;
+        if (period === 'PM' && hours !== 12) {
+          hour24 = hours + 12;
+        } else if (period === 'AM' && hours === 12) {
+          hour24 = 0;
+        }
 
-        await Notifications.scheduleNotificationAsync({
-          content: {
-            title: 'Medication Reminder',
-            body: `Time to take ${name} - ${dose}`,
-            sound: true,
-          },
-          trigger: notificationDate,
-        });
+        const notificationDate = new Date();
+        notificationDate.setDate(notificationDate.getDate() + day);
+        notificationDate.setHours(hour24, minutes, 0, 0);
+
+        // Only schedule future notifications
+        if (notificationDate > new Date()) {
+          await Notifications.scheduleNotificationAsync({
+            content: {
+              title: 'Medication Reminder',
+              body: `Time to take ${name} - ${dose}`,
+              sound: true,
+            },
+            trigger: {
+              type: 'date',
+              date: notificationDate,
+            },
+          });
+        }
       }
     }
   };
@@ -135,6 +205,15 @@ export default function AddMedication() {
     if (!formData.name || !formData.dose || formData.times.some(t => !t)) {
       Alert.alert('Error', 'Please fill in all fields');
       return;
+    }
+
+    // Validate time format
+    const timePattern = /^(0?[1-9]|1[0-2]):[0-5][0-9] (AM|PM)$/;
+    for (const time of formData.times) {
+      if (!timePattern.test(time)) {
+        Alert.alert('Error', 'Please enter time in format: HH:MM AM/PM (e.g., 8:30 AM, 2:15 PM)');
+        return;
+      }
     }
 
     const newMedication: Medication = {
@@ -210,13 +289,20 @@ export default function AddMedication() {
 
         <Text style={styles.label}>Scheduled Times</Text>
         {formData.times.map((time, index) => (
-          <TextInput
-            key={index}
-            style={styles.input}
-            value={time}
-            onChangeText={(text) => updateTime(index, text)}
-            placeholder="HH:MM (e.g., 08:00, 14:30)"
-          />
+          <View key={index} style={styles.timeInputContainer}>
+            <TextInput
+              style={[styles.input, styles.timeInput]}
+              value={time}
+              onChangeText={(text) => updateTime(index, text)}
+              placeholder="Time with AM/PM (e.g., 8:30 AM, 2:15 PM)"
+            />
+            <TouchableOpacity 
+              style={styles.timePickerButton}
+              onPress={() => showTimePicker(index)}
+            >
+              <Text style={styles.timePickerText}>🕐</Text>
+            </TouchableOpacity>
+          </View>
         ))}
 
         <TouchableOpacity style={styles.addTimeButton} onPress={addTimeSlot}>
@@ -320,5 +406,26 @@ const styles = StyleSheet.create({
     color: 'white',
     fontSize: 18,
     fontWeight: 'bold',
+  },
+  timeInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 15,
+  },
+  timeInput: {
+    flex: 1,
+    marginBottom: 0,
+    marginRight: 10,
+  },
+  timePickerButton: {
+    backgroundColor: '#007AFF',
+    padding: 12,
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+    minWidth: 50,
+  },
+  timePickerText: {
+    fontSize: 20,
   },
 });

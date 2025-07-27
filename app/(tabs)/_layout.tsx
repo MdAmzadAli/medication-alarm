@@ -1,4 +1,3 @@
-
 import { Tabs } from 'expo-router';
 import React from 'react';
 import { Platform } from 'react-native';
@@ -30,22 +29,40 @@ export default function TabLayout() {
       <Tabs.Screen
         name="index"
         options={{
-          title: 'Medications',
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="pills.fill" color={color} />,
+          title: 'Home',
+          tabBarIcon: ({ color, focused }) => (
+            <IconSymbol 
+              size={28} 
+              name={focused ? "house.fill" : "house"} 
+              color={color} 
+            />
+          ),
         }}
       />
       <Tabs.Screen
         name="add-medication"
         options={{
-          title: 'Add',
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="plus.circle.fill" color={color} />,
+          title: 'Add Med',
+          tabBarIcon: ({ color, focused }) => (
+            <IconSymbol 
+              size={28} 
+              name={focused ? "plus.circle.fill" : "plus.circle"} 
+              color={color} 
+            />
+          ),
         }}
       />
       <Tabs.Screen
         name="explore"
         options={{
           title: 'History',
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="clock.fill" color={color} />,
+          tabBarIcon: ({ color, focused }) => (
+            <IconSymbol 
+              size={28} 
+              name={focused ? "clock.fill" : "clock"} 
+              color={color} 
+            />
+          ),
         }}
       />
     </Tabs>

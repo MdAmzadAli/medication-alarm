@@ -143,37 +143,35 @@ export default function AddMedication() {
   };
 
   const TimePickerComponent = ({ index }: { index: number }) => {
-    const [selectedHour, setSelectedHour] = useState(0);
+    const [selectedHour, setSelectedHour] = useState(12);
     const [selectedMinute, setSelectedMinute] = useState(0);
     const [selectedPeriod, setSelectedPeriod] = useState('AM');
     const [showHourPicker, setShowHourPicker] = useState(false);
     const [showMinutePicker, setShowMinutePicker] = useState(false);
-    const [isInitialized, setIsInitialized] = useState(false);
 
     const hours = Array.from({ length: 12 }, (_, i) => i === 0 ? 12 : i);
     const minutes = Array.from({ length: 60 }, (_, i) => i);
     const periods = ['AM', 'PM'];
 
-    React.useEffect(() => {
-      if (!isInitialized) {
-        setSelectedHour(12);
-        setIsInitialized(true);
-        return;
-      }
-      
-      const displayHour = selectedHour;
-      const time = `${displayHour}:${selectedMinute.toString().padStart(2, '0')} ${selectedPeriod}`;
-      updateTime(index, time);
-    }, [selectedHour, selectedMinute, selectedPeriod, isInitialized]);
-
+    // Update time only when user makes a selection
     const handleHourSelect = (hour: number) => {
       setSelectedHour(hour);
       setShowHourPicker(false);
+      const time = `${hour}:${selectedMinute.toString().padStart(2, '0')} ${selectedPeriod}`;
+      updateTime(index, time);
     };
 
     const handleMinuteSelect = (minute: number) => {
       setSelectedMinute(minute);
       setShowMinutePicker(false);
+      const time = `${selectedHour}:${minute.toString().padStart(2, '0')} ${selectedPeriod}`;
+      updateTime(index, time);
+    };
+
+    const handlePeriodSelect = (period: string) => {
+      setSelectedPeriod(period);
+      const time = `${selectedHour}:${selectedMinute.toString().padStart(2, '0')} ${period}`;
+      updateTime(index, time);
     };
 
     return (
@@ -212,7 +210,7 @@ export default function AddMedication() {
                   styles.periodToggle,
                   selectedPeriod === period && styles.selectedPeriodToggle
                 ]}
-                onPress={() => setSelectedPeriod(period)}
+                onPress={() => handlePeriodSelect(period)}
               >
                 <Text style={[
                   styles.periodToggleText,
@@ -314,14 +312,18 @@ export default function AddMedication() {
         if (notificationDate > new Date()) {
           await Notifications.scheduleNotificationAsync({
             content: {
-              title: '💊 Medication Reminder',
-              body: `Time to take ${name}\nDose: ${dose}\nScheduled: ${time}`,
-              sound: 'default',
+              title: '🔔 MEDICATION REMINDER!',
+              body: `💊 ${name}\n📋 Dose: ${dose}\n⏰ Time: ${time}\n📅 Day ${day + 1} of ${duration}`,
+              sound: true,
+              priority: 'high',
+              vibrate: [0, 250, 250, 250],
               data: {
                 medicationName: name,
                 dose: dose,
                 scheduledTime: time,
-                day: day + 1
+                day: day + 1,
+                duration: duration,
+                type: 'medication_reminder'
               },
             },
             trigger: {
@@ -337,9 +339,14 @@ export default function AddMedication() {
   const testNotification = async () => {
     await Notifications.scheduleNotificationAsync({
       content: {
-        title: '🔔 Test Notification',
-        body: 'This is a test notification with sound!',
-        sound: 'default',
+        title: '🔔 MEDICATION ALARM TEST!',
+        body: '💊 Test Medicine\n📋 Dose: 1 tablet\n⏰ Time: Now\nThis is how your medication reminders will sound!',
+        sound: true,
+        priority: 'high',
+        vibrate: [0, 250, 250, 250],
+        data: {
+          type: 'test_notification'
+        },
       },
       trigger: {
         seconds: 2,

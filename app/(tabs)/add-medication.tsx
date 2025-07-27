@@ -52,84 +52,7 @@ export default function AddMedication() {
       }),
     });
 
-    // Listen for notification responses to handle alarm dismissal
-    const subscription = Notifications.addNotificationResponseReceivedListener(async (response) => {
-      const { actionIdentifier, notification } = response;
-      const notificationData = notification.request.content.data;
-      
-      if (notificationData?.type === 'medication_reminder') {
-        // ALWAYS stop the alarm sound first, regardless of action
-        await stopAlarmSound();
-        
-        if (actionIdentifier === 'STOP_ACTION') {
-          // Stop alarm and dismiss notification completely
-          await Notifications.dismissNotificationAsync(notification.request.identifier);
-          
-          // Cancel any pending snooze alarms for this medication
-          if (notificationData.snoozeId) {
-            const allNotifications = await Notifications.getAllScheduledNotificationsAsync();
-            for (const scheduledNotif of allNotifications) {
-              if (scheduledNotif.content.data?.snoozeId === notificationData.snoozeId) {
-                await Notifications.cancelScheduledNotificationAsync(scheduledNotif.identifier);
-              }
-            }
-          }
-          
-          Alert.alert(
-            '✅ Alarm Stopped',
-            `Medication reminder for ${notificationData.medicationName} has been stopped completely.`,
-            [{ text: 'OK' }]
-          );
-          
-        } else if (actionIdentifier === 'SNOOZE_ACTION') {
-          // Don't dismiss - we'll modify the current notification
-          const currentNotificationId = notification.request.identifier;
-          
-          // Schedule snooze notification sequence using the same notification ID
-          await scheduleSnoozeNotification(notificationData, currentNotificationId);
-          
-        } else if (actionIdentifier === 'DISMISS_ACTION') {
-          // Dismiss snoozed notification permanently
-          await Notifications.dismissNotificationAsync(notification.request.identifier);
-          
-          // Cancel any pending snooze alarms for this medication
-          if (notificationData.snoozeId) {
-            const allNotifications = await Notifications.getAllScheduledNotificationsAsync();
-            for (const scheduledNotif of allNotifications) {
-              if (scheduledNotif.content.data?.snoozeId === notificationData.snoozeId) {
-                await Notifications.cancelScheduledNotificationAsync(scheduledNotif.identifier);
-              }
-            }
-          }
-          
-          Alert.alert(
-            '✅ Reminder Dismissed',
-            `Snoozed reminder for ${notificationData.medicationName} has been dismissed permanently.`,
-            [{ text: 'OK' }]
-          );
-          
-        } else {
-          // Default tap action - alarm already stopped above
-          if (notificationData.isSnoozeWaiting) {
-            // If it's a waiting snooze notification, show info
-            Alert.alert(
-              'Snoozed Reminder',
-              `This reminder is snoozed. It will ring again in a moment.\n\nUse "Dismiss Alarm" to stop it permanently.`,
-              [{ text: 'OK' }]
-            );
-          } else {
-            // Regular medication reminder tap
-            Alert.alert(
-              'Medication Reminder',
-              `Time to take your ${notificationData.medicationName}!\nDose: ${notificationData.dose}`,
-              [{ text: 'Taken', onPress: () => {} }]
-            );
-          }
-        }
-      }
-    });
-
-    return () => subscription.remove();
+    // NOTE: Notification response listener is handled in index.tsx to avoid conflicts
   }, []);
 
   const requestNotificationPermissions = async () => {
@@ -173,6 +96,7 @@ export default function AddMedication() {
     ]);
   };
 
+  // This function is exported to be used by the main notification handler in index.tsx
   const scheduleSnoozeNotification = async (originalData: any, currentNotificationId: string) => {
     const currentSnoozeCount = originalData.snoozeCount || 0;
     
@@ -190,19 +114,19 @@ export default function AddMedication() {
     const snoozeId = originalData.snoozeId || `snooze_${originalData.medicationName}_${Date.now()}`;
     
     try {
-      // First, cancel the current notification to avoid duplicates
-      await Notifications.cancelScheduledNotificationAsync(currentNotificationId);
+      // Clear any existing notifications with same identifier first
       await Notifications.dismissNotificationAsync(currentNotificationId);
       
-      // Create the snoozed notification with only dismiss button
-      const snoozeNotificationId = await Notifications.scheduleNotificationAsync({
+      // Create ONE snoozed notification
+      await Notifications.scheduleNotificationAsync({
+        identifier: currentNotificationId, // Reuse same ID
         content: {
           title: `⏰ SNOOZED (${newSnoozeCount}/7) - ${originalData.medicationName}`,
           body: `💊 ${originalData.medicationName}\n📋 Dose: ${originalData.dose}\n⏰ Original Time: ${originalData.scheduledTime}\n\n😴 Snoozed for 2 minutes...\n\nUse "Dismiss" to stop this reminder permanently.`,
-          sound: false, // No alarm sound while snoozed
+          sound: false,
           priority: 'max',
           vibrate: [0, 100, 100],
-          categoryIdentifier: 'MEDICATION_SNOOZED', // Shows only dismiss button
+          categoryIdentifier: 'MEDICATION_SNOOZED',
           data: {
             ...originalData,
             type: 'medication_reminder',
@@ -214,27 +138,23 @@ export default function AddMedication() {
             originalNotificationId: currentNotificationId
           },
         },
-        trigger: {
-          seconds: 1,
-        },
+        trigger: { seconds: 1 },
       });
 
-      // Schedule the alarm notification to replace the snoozed one after 2 minutes
+      // After 2 minutes, update the same notification to alarm state
       setTimeout(async () => {
         try {
-          // Cancel the snoozed notification
-          await Notifications.cancelScheduledNotificationAsync(snoozeNotificationId);
-          await Notifications.dismissNotificationAsync(snoozeNotificationId);
+          await Notifications.dismissNotificationAsync(currentNotificationId);
           
-          // Create the alarm notification
           await Notifications.scheduleNotificationAsync({
+            identifier: currentNotificationId, // Same ID again
             content: {
               title: `🚨 MEDICATION ALARM! (Snooze ${newSnoozeCount}/7)`,
               body: `💊 ${originalData.medicationName}\n📋 Dose: ${originalData.dose}\n⏰ Original Time: ${originalData.scheduledTime}\n\n🔔 Time to take your medication!\n\nThis is snooze #${newSnoozeCount} of 7.`,
               sound: true,
               priority: 'max',
               vibrate: [0, 250, 250, 250],
-              categoryIdentifier: 'MEDICATION_REMINDER', // Shows stop/snooze buttons
+              categoryIdentifier: 'MEDICATION_REMINDER',
               data: {
                 ...originalData,
                 type: 'medication_reminder',
@@ -246,17 +166,14 @@ export default function AddMedication() {
                 originalNotificationId: currentNotificationId
               },
             },
-            trigger: {
-              seconds: 1,
-            },
+            trigger: { seconds: 1 },
           });
           
-          // Start the alarm sound
           await playAlarmSound();
         } catch (error) {
-          console.log('Error creating alarm notification after snooze:', error);
+          console.log('Error updating notification after snooze:', error);
         }
-      }, 2 * 60 * 1000); // 2 minutes
+      }, 2 * 60 * 1000);
       
     } catch (error) {
       console.log('Error in snooze notification process:', error);

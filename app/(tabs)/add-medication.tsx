@@ -164,19 +164,19 @@ export default function AddMedication() {
     const minutes = Array.from({ length: 60 }, (_, i) => i);
     const periods = ['AM', 'PM'];
 
-    // Update time only when user makes a selection
+    // Update time and close picker
     const handleHourSelect = (hour: number) => {
       setSelectedHour(hour);
-      setShowHourPicker(false);
       const time = `${hour}:${selectedMinute.toString().padStart(2, '0')} ${selectedPeriod}`;
       updateTime(index, time);
+      setShowHourPicker(false);
     };
 
     const handleMinuteSelect = (minute: number) => {
       setSelectedMinute(minute);
-      setShowMinutePicker(false);
       const time = `${selectedHour}:${minute.toString().padStart(2, '0')} ${selectedPeriod}`;
       updateTime(index, time);
+      setShowMinutePicker(false);
     };
 
     const handlePeriodSelect = (period: string) => {
@@ -235,66 +235,96 @@ export default function AddMedication() {
         </View>
 
         {/* Hour Picker Modal */}
-        {showHourPicker && (
-          <View style={styles.pickerModal}>
-            <View style={styles.pickerHeader}>
-              <Text style={styles.pickerTitle}>Select Hour</Text>
-              <TouchableOpacity onPress={() => setShowHourPicker(false)}>
-                <Text style={styles.pickerCloseButton}>✕</Text>
-              </TouchableOpacity>
-            </View>
-            <ScrollView style={styles.pickerScrollView} showsVerticalScrollIndicator={false}>
-              {hours.map((hour) => (
-                <TouchableOpacity
-                  key={hour}
-                  style={[
-                    styles.pickerOption,
-                    selectedHour === hour && styles.selectedPickerOption
-                  ]}
-                  onPress={() => handleHourSelect(hour)}
-                >
-                  <Text style={[
-                    styles.pickerOptionText,
-                    selectedHour === hour && styles.selectedPickerOptionText
-                  ]}>
-                    {hour.toString().padStart(2, '0')}
-                  </Text>
+        <Modal
+          visible={showHourPicker}
+          transparent={true}
+          animationType="fade"
+          onRequestClose={() => setShowHourPicker(false)}
+        >
+          <TouchableOpacity 
+            style={styles.modalOverlay} 
+            activeOpacity={1} 
+            onPress={() => setShowHourPicker(false)}
+          >
+            <View style={styles.pickerModalContainer}>
+              <View style={styles.pickerHeader}>
+                <Text style={styles.pickerTitle}>Select Hour</Text>
+                <TouchableOpacity onPress={() => setShowHourPicker(false)}>
+                  <Text style={styles.pickerCloseButton}>✕</Text>
                 </TouchableOpacity>
-              ))}
-            </ScrollView>
-          </View>
-        )}
+              </View>
+              <ScrollView 
+                style={styles.pickerScrollView} 
+                showsVerticalScrollIndicator={true}
+                nestedScrollEnabled={true}
+              >
+                {hours.map((hour) => (
+                  <TouchableOpacity
+                    key={hour}
+                    style={[
+                      styles.pickerOption,
+                      selectedHour === hour && styles.selectedPickerOption
+                    ]}
+                    onPress={() => handleHourSelect(hour)}
+                  >
+                    <Text style={[
+                      styles.pickerOptionText,
+                      selectedHour === hour && styles.selectedPickerOptionText
+                    ]}>
+                      {hour.toString().padStart(2, '0')}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </View>
+          </TouchableOpacity>
+        </Modal>
 
         {/* Minute Picker Modal */}
-        {showMinutePicker && (
-          <View style={styles.pickerModal}>
-            <View style={styles.pickerHeader}>
-              <Text style={styles.pickerTitle}>Select Minute</Text>
-              <TouchableOpacity onPress={() => setShowMinutePicker(false)}>
-                <Text style={styles.pickerCloseButton}>✕</Text>
-              </TouchableOpacity>
-            </View>
-            <ScrollView style={styles.pickerScrollView} showsVerticalScrollIndicator={false}>
-              {minutes.map((minute) => (
-                <TouchableOpacity
-                  key={minute}
-                  style={[
-                    styles.pickerOption,
-                    selectedMinute === minute && styles.selectedPickerOption
-                  ]}
-                  onPress={() => handleMinuteSelect(minute)}
-                >
-                  <Text style={[
-                    styles.pickerOptionText,
-                    selectedMinute === minute && styles.selectedPickerOptionText
-                  ]}>
-                    {minute.toString().padStart(2, '0')}
-                  </Text>
+        <Modal
+          visible={showMinutePicker}
+          transparent={true}
+          animationType="fade"
+          onRequestClose={() => setShowMinutePicker(false)}
+        >
+          <TouchableOpacity 
+            style={styles.modalOverlay} 
+            activeOpacity={1} 
+            onPress={() => setShowMinutePicker(false)}
+          >
+            <View style={styles.pickerModalContainer}>
+              <View style={styles.pickerHeader}>
+                <Text style={styles.pickerTitle}>Select Minute</Text>
+                <TouchableOpacity onPress={() => setShowMinutePicker(false)}>
+                  <Text style={styles.pickerCloseButton}>✕</Text>
                 </TouchableOpacity>
-              ))}
-            </ScrollView>
-          </View>
-        )}
+              </View>
+              <ScrollView 
+                style={styles.pickerScrollView} 
+                showsVerticalScrollIndicator={true}
+                nestedScrollEnabled={true}
+              >
+                {minutes.map((minute) => (
+                  <TouchableOpacity
+                    key={minute}
+                    style={[
+                      styles.pickerOption,
+                      selectedMinute === minute && styles.selectedPickerOption
+                    ]}
+                    onPress={() => handleMinuteSelect(minute)}
+                  >
+                    <Text style={[
+                      styles.pickerOptionText,
+                      selectedMinute === minute && styles.selectedPickerOptionText
+                    ]}>
+                      {minute.toString().padStart(2, '0')}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </View>
+          </TouchableOpacity>
+        </Modal>
       </View>
     );
   };
@@ -673,20 +703,22 @@ const styles = StyleSheet.create({
   selectedPeriodToggleText: {
     color: 'white',
   },
-  pickerModal: {
-    position: 'absolute',
-    top: 80,
-    left: 15,
-    right: 15,
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  pickerModalContainer: {
     backgroundColor: 'white',
     borderRadius: 10,
-    maxHeight: 200,
+    width: '80%',
+    maxHeight: 400,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.25,
     shadowRadius: 4,
     elevation: 5,
-    zIndex: 1000,
   },
   pickerHeader: {
     flexDirection: 'row',
@@ -709,7 +741,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 5,
   },
   pickerScrollView: {
-    maxHeight: 150,
+    maxHeight: 300,
+    flexGrow: 0,
   },
   pickerOption: {
     paddingVertical: 12,

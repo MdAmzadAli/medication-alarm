@@ -34,7 +34,7 @@ export default function AddMedication() {
     name: '',
     dose: '',
     timesPerDay: 1,
-    times: [''],
+    times: ['12:00 AM'],
     duration: 7,
     imageUri: '',
   });
@@ -136,7 +136,7 @@ export default function AddMedication() {
     setFormData({
       ...formData,
       timesPerDay: formData.timesPerDay + 1,
-      times: [...formData.times, ''],
+      times: [...formData.times, '12:00 AM'],
     });
   };
 
@@ -161,6 +161,8 @@ export default function AddMedication() {
       if (!timeString) return { hour: 12, minute: 0, period: 'AM' };
       
       const [timePart, period] = timeString.split(' ');
+      if (!timePart || !period) return { hour: 12, minute: 0, period: 'AM' };
+      
       const [hourStr, minuteStr] = timePart.split(':');
       return {
         hour: parseInt(hourStr) || 12,
@@ -169,9 +171,11 @@ export default function AddMedication() {
       };
     };
 
-    const { hour: selectedHour, minute: selectedMinute, period: selectedPeriod } = parseTime(currentTime);
     const [showHourPicker, setShowHourPicker] = useState(false);
     const [showMinutePicker, setShowMinutePicker] = useState(false);
+    
+    // Get current parsed time values
+    const { hour: selectedHour, minute: selectedMinute, period: selectedPeriod } = parseTime(currentTime);
 
     const hours = Array.from({ length: 12 }, (_, i) => i + 1);
     const minutes = Array.from({ length: 60 }, (_, i) => i);
@@ -203,7 +207,10 @@ export default function AddMedication() {
           {/* Hour Display */}
           <TouchableOpacity 
             style={styles.timeSegment}
-            onPress={() => setShowHourPicker(!showHourPicker)}
+            onPress={() => {
+              setShowMinutePicker(false);
+              setShowHourPicker(!showHourPicker);
+            }}
           >
             <Text style={styles.timeDisplayText}>
               {selectedHour.toString().padStart(2, '0')}
@@ -215,7 +222,10 @@ export default function AddMedication() {
           {/* Minute Display */}
           <TouchableOpacity 
             style={styles.timeSegment}
-            onPress={() => setShowMinutePicker(!showMinutePicker)}
+            onPress={() => {
+              setShowHourPicker(false);
+              setShowMinutePicker(!showMinutePicker);
+            }}
           >
             <Text style={styles.timeDisplayText}>
               {selectedMinute.toString().padStart(2, '0')}

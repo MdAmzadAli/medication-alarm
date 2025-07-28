@@ -943,7 +943,7 @@ export default function Home() {
               <Text style={styles.label}>Dose Amount</Text>
               <TextInput
                 style={styles.input}
-```text
+
                 value={editingMedication.dose}
                 onChangeText={(text) => setEditingMedication({ ...editingMedication, dose: text })}
                 placeholder="e.g., 1 tablet, 2 spoons"

@@ -522,7 +522,43 @@ export default function AddMedication() {
     }
   };
 
+  const playAlarmSound = async () => {
+    try {
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: false,
+        playsInSilentModeIOS: true,
+        shouldDuckAndroid: false,
+        staysActiveInBackground: true,
+      });
 
+      // Get custom ringtone if available
+      let soundSource;
+      try {
+        const customRingtoneUri = await AsyncStorage.getItem('selectedRingtoneUri');
+        if (customRingtoneUri) {
+          soundSource = { uri: customRingtoneUri };
+        } else {
+          soundSource = require('../../assets/notification-sound.mp3');
+        }
+      } catch (error) {
+        soundSource = require('../../assets/notification-sound.mp3');
+      }
+
+      const { sound } = await Audio.Sound.createAsync(
+        soundSource,
+        {
+          shouldPlay: true,
+          isLooping: true,
+          volume: 1.0,
+        }
+      );
+
+      return sound;
+    } catch (error) {
+      console.error('Error playing alarm sound:', error);
+      throw error;
+    }
+  };
 
   const testNotification = async () => {
     const notificationId = 'test_notification_' + Date.now();

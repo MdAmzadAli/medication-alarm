@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -16,790 +16,397 @@ import { Audio } from 'expo-av';
 import { useFocusEffect } from '@react-navigation/native';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
+import { IconSymbol } from '../../components/ui/IconSymbol';
+import { Navbar } from '../../components/Navbar';
+import { SearchModal } from '../../components/SearchModal';
+import { SettingsModal } from '../../components/SettingsModal';
+
+// Set up notification handler
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+  }),
+});
 
 interface Medication {
   id: string;
   name: string;
-  dose: string;
-  timesPerDay: number;
-  scheduledTimes: string[];
-  duration: number;
-  startDate: string;
-  imageUri?: string;
-  isLiked?: boolean;
+  dosage: string;
+  frequency: string;
+  times: string[];
+  image?: string;
+  isLiked: boolean;
 }
 
-export default function Home() {
+export default function HomeScreen() {
   const [medications, setMedications] = useState<Medication[]>([]);
-  const [alarmSound, setAlarmSound] = useState<Audio.Sound | null>(null);
-  const [showAddModal, setShowAddModal] = useState(false);
-  const [showDetailModal, setShowDetailModal] = useState(false);
-  const [selectedMedication, setSelectedMedication] = useState<Medication | null>(null);
+  const [expandedMedication, setExpandedMedication] = useState<string | null>(null);
   const [editingMedication, setEditingMedication] = useState<Medication | null>(null);
-  const [showEditModal, setShowEditModal] = useState(false);
-  const [customRingtone, setCustomRingtone] = useState<string | null>(null);
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [showSearchModal, setShowSearchModal] = useState(false);
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(false);
+  const scrollViewRef = useRef<ScrollView>(null);
 
-  // Form data for adding new medication
-  const [formData, setFormData] = useState({
+  // Active alarms tracking
+  const [activeAlarms, setActiveAlarms] = useState<{[key: string]: any}>({});
+
+  // Add medication form state
+  const [newMedication, setNewMedication] = useState({
     name: '',
-    dose: '',
-    timesPerDay: 1,
-    times: ['12:00 PM'],
-    duration: 7,
-    imageUri: '',
+    dosage: '',
+    frequency: '',
+    times: [] as string[],
+    image: '',
   });
 
-  // Keep track of individual alarm sounds by notification ID
-  const notificationAlarms = React.useRef<Map<string, Audio.Sound>>(new Map());
+  useFocusEffect(
+    React.useCallback(() => {
+      loadMedications();
+      loadDarkModePreference();
+      checkForNotificationResponse();
+    }, [])
+  );
 
-  // Keep track of all active sound instances
-  const activeSounds = React.useRef<Set<Audio.Sound>>(new Set());
-
-  useEffect(() => {
-    loadMedications();
-    setupNotificationCategories();
-    loadSettings();
-
-    // Listen for notifications when app is in foreground
-    const notificationListener = Notifications.addNotificationReceivedListener(notification => {
-      if (notification.request.content.data?.shouldPlayAlarm) {
-        const notificationId = notification.request.identifier;
-        playNotificationAlarm(notificationId);
-      }
-    });
-
-    // Listen for notification dismissals (when user swipes away notification)
-    const dismissalListener = Notifications.addNotificationReceivedListener(notification => {
-      // Check if this is a medication reminder that might have alarm
-      if (notification.request.content.data?.shouldPlayAlarm || notification.request.content.data?.type === 'medication_reminder') {
-        const notificationId = notification.request.identifier;
-        console.log(`Medication notification received: ${notificationId}, setting up dismissal detection`);
-
-        // Use a single, more frequent check with immediate response
-        let isCheckingDismissal = true;
-        const dismissalCheckInterval = setInterval(() => {
-          if (!isCheckingDismissal) {
-            clearInterval(dismissalCheckInterval);
-            return;
-          }
-
-          Notifications.getPresentedNotificationsAsync().then(presentedNotifications => {
-            const isStillPresented = presentedNotifications.some(
-              presented => presented.request.identifier === notificationId
-            );
-
-            if (!isStillPresented) {
-              console.log(`Notification ${notificationId} dismissed by swipe - stopping alarm IMMEDIATELY`);
-              isCheckingDismissal = false;
-              clearInterval(dismissalCheckInterval);
-              // IMMEDIATE stop without any delays
-              stopSpecificNotificationAlarm(notificationId);
-            }
-          }).catch(() => {});
-        }, 300); // Check every 300ms for faster response
-
-        // Stop checking after 30 seconds to prevent memory leaks
-        setTimeout(() => {
-          isCheckingDismissal = false;
-          clearInterval(dismissalCheckInterval);
-        }, 30000);
-      }
-    });
-
-    // Listen for notification interactions
-    const responseListener = Notifications.addNotificationResponseReceivedListener(async (response) => {
-      const { actionIdentifier, notification } = response;
-      const notificationData = notification.request.content.data;
-
-      if (notificationData?.type === 'medication_reminder') {
-        if (actionIdentifier === 'STOP_ACTION') {
-          // STOP only this specific notification's alarm
-          const notificationId = notification.request.identifier;
-          console.log(`STOP ACTION: Stopping alarm for notification ${notificationId}`);
-          stopSpecificNotificationAlarm(notificationId);
-          // Stop alarm and dismiss notification completely
-          await Notifications.dismissNotificationAsync(notification.request.identifier);
-
-          // Cancel any pending snooze alarms for this medication
-          if (notificationData.snoozeId) {
-            const allNotifications = await Notifications.getAllScheduledNotificationsAsync();
-            for (const scheduledNotif of allNotifications) {
-              if (scheduledNotif.content.data?.snoozeId === notificationData.snoozeId) {
-                await Notifications.cancelScheduledNotificationAsync(scheduledNotif.identifier);
-              }
-            }
-          }
-
-          Alert.alert(
-            '✅ Alarm Stopped',
-            `Medication reminder for ${notificationData.medicationName} has been stopped completely.`,
-            [{ text: 'OK' }]
-          );
-
-        } else if (actionIdentifier === 'SNOOZE_ACTION') {
-          // IMMEDIATELY stop this specific alarm
-          const notificationId = notification.request.identifier;
-          console.log(`SNOOZE ACTION: Stopping alarm for notification ${notificationId}`);
-          stopSpecificNotificationAlarm(notificationId);
-
-          // Don't dismiss here - let scheduleSnoozeNotification handle it
-          await scheduleSnoozeNotification(notificationData, notificationId);
-
-        } else if (actionIdentifier === 'DISMISS_ACTION') {
-          // IMMEDIATELY stop this specific alarm
-          const notificationId = notification.request.identifier;
-          console.log(`DISMISS ACTION: Stopping alarm for notification ${notificationId}`);
-          stopSpecificNotificationAlarm(notificationId);
-          // Dismiss snoozed notification permanently
-          await Notifications.dismissNotificationAsync(notification.request.identifier);
-
-          // Cancel any pending snooze alarms for this medication
-          if (notificationData.snoozeId) {
-            const allNotifications = await Notifications.getAllScheduledNotificationsAsync();
-            for (const scheduledNotif of allNotifications) {
-              if (scheduledNotif.content.data?.snoozeId === notificationData.snoozeId) {
-                await Notifications.cancelScheduledNotificationAsync(scheduledNotif.identifier);
-              }
-            }
-          }
-
-          Alert.alert(
-            '✅ Reminder Dismissed',
-            `Snoozed reminder for ${notificationData.medicationName} has been dismissed permanently.`,
-            [{ text: 'OK' }]
-          );
-
-        } else {
-          // Default tap action - IMMEDIATELY stop this specific alarm
-          const notificationId = notification.request.identifier;
-          console.log(`TAP ACTION: Stopping alarm for notification ${notificationId}`);
-          stopSpecificNotificationAlarm(notificationId);
-
-          if (notificationData.isSnoozeWaiting) {
-            // If it's a waiting snooze notification, show info
-            Alert.alert(
-              'Snoozed Reminder',
-              `This reminder is snoozed. It will ring again in a moment.\n\nUse "Dismiss Alarm" to stop it permanently.`,
-              [{ text: 'OK' }]
-            );
-          } else {
-            // Regular medication reminder tap
-            Alert.alert(
-              'Medication Reminder',
-              `Time to take your ${notificationData.medicationName}!\nDose: ${notificationData.dose}`,
-              [{ text: 'Taken', onPress: () => {} }]
-            );
-          }
-        }
-      }
-    });
-
-    return () => {
-      notificationListener.remove();
-      responseListener.remove();
-      dismissalListener.remove();
-    };
-  }, []);
-
-  const playNotificationAlarm = async (notificationId: string) => {
+  const loadDarkModePreference = async () => {
     try {
-      // Stop any existing alarm for this specific notification first
-      stopSpecificNotificationAlarm(notificationId);
-
-      const alarmUri = customRingtone || 'https://www.soundjay.com/misc/sounds/bell-ringing-05.wav';
-      const { sound } = await Audio.Sound.createAsync(
-        { uri: alarmUri },
-        { shouldPlay: true, isLooping: true, volume: 1.0 }
-      );
-
-      // Track this sound instance by notification ID
-      notificationAlarms.current.set(notificationId, sound);
-      activeSounds.current.add(sound);
-      setAlarmSound(sound);
-
-      console.log(`Started alarm for notification: ${notificationId}`);
-
-      // Auto-stop after 60 seconds only
-      setTimeout(() => {
-        stopSpecificNotificationAlarm(notificationId);
-      }, 60000);
+      const savedTheme = await AsyncStorage.getItem('isDarkMode');
+      if (savedTheme !== null) {
+        setIsDarkMode(JSON.parse(savedTheme));
+      }
     } catch (error) {
-      console.log('Error playing alarm sound:', error);
+      console.error('Error loading theme preference:', error);
     }
   };
 
-  const stopSpecificNotificationAlarm = (notificationId: string) => {
+  const toggleDarkMode = async () => {
+    const newMode = !isDarkMode;
+    setIsDarkMode(newMode);
     try {
-      const sound = notificationAlarms.current.get(notificationId);
-      if (sound) {
-        // IMMEDIATE synchronous stop operations
-        try {
-          sound.stopAsync();
-          sound.unloadAsync();
-        } catch (e) {
-          // Ignore errors for immediate response
-        }
-
-        // Remove from tracking maps immediately
-        notificationAlarms.current.delete(notificationId);
-        activeSounds.current.delete(sound);
-
-        // If this was the current alarmSound, clear it immediately
-        if (alarmSound === sound) {
-          setAlarmSound(null);
-        }
-
-        console.log(`Stopped alarm for notification: ${notificationId}`);
-      } else {
-        console.log(`No alarm found for notification: ${notificationId}`);
-      }
+      await AsyncStorage.setItem('isDarkMode', JSON.stringify(newMode));
     } catch (error) {
-      console.log(`Error stopping alarm for notification ${notificationId}:`, error);
+      console.error('Error saving theme preference:', error);
     }
   };
 
-  const setupNotificationCategories = async () => {
-    await Notifications.setNotificationCategoryAsync('MEDICATION_REMINDER', [
-      {
-        identifier: 'STOP_ACTION',
-        buttonTitle: '🛑 Stop',
-        options: {
-          opensAppToForeground: false,
-        },
-      },
-      {
-        identifier: 'SNOOZE_ACTION',
-        buttonTitle: '😴 Snooze 2min',
-        options: {
-          opensAppToForeground: false,
-        },
-      },
-    ]);
-
-    // Category for snoozed notifications with dismiss option
-    await Notifications.setNotificationCategoryAsync('MEDICATION_SNOOZED', [
-      {
-        identifier: 'DISMISS_ACTION',
-        buttonTitle: '✅ Dismiss',
-        options: {
-          opensAppToForeground: false,
-        },
-      },
-    ]);
-  };
-
-  const scheduleSnoozeNotification = async (originalData: any, currentNotificationId: string) => {
-    const currentSnoozeCount = originalData.snoozeCount || 0;
-
-    // Check if maximum snoozes reached
-    if (currentSnoozeCount >= 7) {
-      Alert.alert(
-        '⚠️ Maximum Snoozes Reached',
-        'You have reached the maximum number of snoozes (7) for this medication reminder. Please take your medication now.',
-        [{ text: 'OK' }]
-      );
-      return;
-    }
-
-    const newSnoozeCount = currentSnoozeCount + 1;
-    const snoozeId = originalData.snoozeId || `snooze_${originalData.medicationName}_${Date.now()}`;
-
-    try {
-      // Clear any existing notifications with same identifier first
-      await Notifications.dismissNotificationAsync(currentNotificationId);
-
-      // Create ONE snoozed notification using the same ID
-      await Notifications.scheduleNotificationAsync({
-        identifier: currentNotificationId, // Reuse same ID to prevent duplicates
-        content: {
-          title: `⏰ SNOOZED (${newSnoozeCount}/7) - ${originalData.medicationName}`,
-          body: `💊 ${originalData.medicationName}\n📋 Dose: ${originalData.dose}\n⏰ Original Time: ${originalData.scheduledTime}\n\n😴 Snoozed for 2 minutes...\n\nUse "Dismiss" to stop this reminder permanently.`,
-          sound: false,
-          priority: 'max',
-          vibrate: [0, 100, 100],
-          categoryIdentifier: 'MEDICATION_SNOOZED',
-          data: {
-            ...originalData,
-            type: 'medication_reminder',
-            shouldPlayAlarm: false,
-            isSnooze: true,
-            snoozeCount: newSnoozeCount,
-            snoozeId: snoozeId,
-            isSnoozeWaiting: true,
-            originalNotificationId: currentNotificationId
-          },
-        },
-        trigger: { seconds: 1 },
-      });
-
-      // After 2 minutes, update the same notification to alarm state with FULL functionality
-      setTimeout(async () => {
-        try {
-          await Notifications.dismissNotificationAsync(currentNotificationId);
-
-          // Restore full notification with ALL original buttons
-          await Notifications.scheduleNotificationAsync({
-            identifier: currentNotificationId, // Same ID to replace existing
-            content: {
-              title: `🚨 MEDICATION ALARM! (Snooze ${newSnoozeCount}/7)`,
-              body: `💊 ${originalData.medicationName}\n📋 Dose: ${originalData.dose}\n⏰ Original Time: ${originalData.scheduledTime}\n\n🔔 Time to take your medication!\n\nThis is snooze #${newSnoozeCount} of 7.`,
-              sound: true,
-              priority: 'max',
-              vibrate: [0, 250, 250, 250],
-              categoryIdentifier: 'MEDICATION_REMINDER', // Use original category for full buttons
-              data: {
-                ...originalData,
-                type: 'medication_reminder',
-                shouldPlayAlarm: true,
-                isSnooze: true,
-                snoozeCount: newSnoozeCount,
-                snoozeId: snoozeId,
-                isSnoozeWaiting: false,
-                originalNotificationId: currentNotificationId
-              },
-            },
-            trigger: { seconds: 1 },
-          });
-
-          await playNotificationAlarm(currentNotificationId);
-        } catch (error) {
-          console.log('Error updating notification after snooze:', error);
-        }
-      }, 2 * 60 * 1000);
-
-    } catch (error) {
-      console.log('Error in snooze notification process:', error);
+  const checkForNotificationResponse = async () => {
+    const lastNotificationResponse = await Notifications.getLastNotificationResponseAsync();
+    if (lastNotificationResponse) {
+      const { notification } = lastNotificationResponse;
+      const notificationId = notification.request.identifier;
+      await stopSpecificAlarm(notificationId);
     }
   };
 
   const loadMedications = async () => {
     try {
-      const stored = await AsyncStorage.getItem('medications');
-      if (stored) {
-        setMedications(JSON.parse(stored));
+      const medicationsData = await AsyncStorage.getItem('medications');
+      if (medicationsData) {
+        setMedications(JSON.parse(medicationsData));
       }
     } catch (error) {
       console.error('Error loading medications:', error);
     }
   };
 
-  useFocusEffect(
-    React.useCallback(() => {
-      loadMedications();
-    }, [])
-  );
-
-  const saveMedications = async (meds: Medication[]) => {
+  const stopSpecificAlarm = async (notificationId: string) => {
     try {
-      await AsyncStorage.setItem('medications', JSON.stringify(meds));
+      if (activeAlarms[notificationId]) {
+        await activeAlarms[notificationId].stopAsync();
+        await activeAlarms[notificationId].unloadAsync();
+
+        setActiveAlarms(prev => {
+          const newAlarms = { ...prev };
+          delete newAlarms[notificationId];
+          return newAlarms;
+        });
+      }
+
+      await Notifications.dismissNotificationAsync(notificationId);
+      await AsyncStorage.removeItem(`alarmPlaying_${notificationId}`);
     } catch (error) {
-      console.error('Error saving medications:', error);
+      console.error('Error stopping specific alarm:', error);
     }
   };
 
-  const toggleLike = async (id: string) => {
-    const updatedMedications = medications.map(med => 
-      med.id === id ? { ...med, isLiked: !med.isLiked } : med
+  const toggleLike = async (medicationId: string) => {
+    const updatedMedications = medications.map(med =>
+      med.id === medicationId ? { ...med, isLiked: !med.isLiked } : med
     );
     setMedications(updatedMedications);
-    await saveMedications(updatedMedications);
+    await AsyncStorage.setItem('medications', JSON.stringify(updatedMedications));
   };
 
-  const deleteMedication = async (id: string) => {
-    Alert.alert(
-      'Delete Medication',
-      'Are you sure you want to delete this medication reminder?',
-      [
-        {
-          text: 'Cancel',
-          style: 'cancel',
-        },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: async () => {
-            const updatedMedications = medications.filter(med => med.id !== id);
-            setMedications(updatedMedications);
-            await saveMedications(updatedMedications);
-
-            // Cancel related notifications
-            const allNotifications = await Notifications.getAllScheduledNotificationsAsync();
-            const medicationToDelete = medications.find(med => med.id === id);
-
-            if (medicationToDelete) {
-              allNotifications.forEach(async (notification) => {
-                if (notification.content.body?.includes(medicationToDelete.name)) {
-                  await Notifications.cancelScheduledNotificationAsync(notification.identifier);
-                }
-              });
-            }
-          },
-        },
-      ]
-    );
+  const startEdit = (medication: Medication) => {
+    setEditingMedication({ ...medication });
   };
 
-  const openEditModal = (medication: Medication) => {
-    setEditingMedication(medication);
-    setShowEditModal(true);
-  };
-
-  const updateMedication = async () => {
+  const saveEdit = async () => {
     if (!editingMedication) return;
 
-    const updatedMedications = medications.map(med => 
+    const updatedMedications = medications.map(med =>
       med.id === editingMedication.id ? editingMedication : med
     );
     setMedications(updatedMedications);
-    await saveMedications(updatedMedications);
-    setShowEditModal(false);
+    await AsyncStorage.setItem('medications', JSON.stringify(updatedMedications));
     setEditingMedication(null);
     Alert.alert('Success', 'Medication updated successfully!');
   };
 
-  const scheduleNotifications = async (medication: Medication, isSnooze = false, snoozeMinutes = 0) => {
-    const { name, dose, scheduledTimes, duration } = medication;
+  const cancelEdit = () => {
+    setEditingMedication(null);
+  };
 
-    for (let day = 0; day < duration; day++) {
-      for (const time of scheduledTimes) {
-        const [timePart, period] = time.split(' ');
-        const [hours, minutes] = timePart.split(':').map(Number);
+  const selectImageForEdit = async () => {
+    if (!editingMedication) return;
 
-        // Convert to 24-hour format
-        let hour24 = hours;
-        if (period === 'PM' && hours !== 12) {
-          hour24 = hours + 12;
-        } else if (period === 'AM' && hours === 12) {
-          hour24 = 0;
+    const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permissionResult.granted) {
+      Alert.alert('Permission required', 'Please allow access to your photo library to select an image.');
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      aspect: [4, 3],
+      quality: 1,
+    });
+
+    if (!result.canceled && result.assets[0]) {
+      setEditingMedication({
+        ...editingMedication,
+        image: result.assets[0].uri
+      });
+    }
+  };
+
+  const deleteMedication = async (medicationId: string) => {
+    Alert.alert(
+      'Delete Medication',
+      'Are you sure you want to delete this medication?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            const updatedMedications = medications.filter(med => med.id !== medicationId);
+            setMedications(updatedMedications);
+            await AsyncStorage.setItem('medications', JSON.stringify(updatedMedications));
+          }
         }
+      ]
+    );
+  };
 
-        const notificationDate = new Date();
-        notificationDate.setDate(notificationDate.getDate() + day);
-        notificationDate.setHours(hour24, minutes, 0, 0);
+  // Add medication functions
+  const addTime = () => {
+    setNewMedication({
+      ...newMedication,
+      times: [...newMedication.times, '']
+    });
+  };
 
-        // Add snooze time if this is a snooze notification
-        if (isSnooze) {
-          notificationDate.setMinutes(notificationDate.getMinutes() + snoozeMinutes);
-        }
+  const updateTime = (index: number, time: string) => {
+    const updatedTimes = [...newMedication.times];
+    updatedTimes[index] = time;
+    setNewMedication({
+      ...newMedication,
+      times: updatedTimes
+    });
+  };
 
-        // Only schedule future notifications
-        if (notificationDate > new Date()) {
-          const notificationId = `medication_${medication.id}_${day}_${time}`; // Create unique ID
+  const removeTime = (index: number) => {
+    const updatedTimes = newMedication.times.filter((_, i) => i !== index);
+    setNewMedication({
+      ...newMedication,
+      times: updatedTimes
+    });
+  };
 
-          await Notifications.scheduleNotificationAsync({
-            identifier: notificationId,
-            content: {
-              title: isSnooze ? '⏰ MEDICATION SNOOZE REMINDER!' : '🚨 MEDICATION ALARM! 🚨',
-              body: `💊 ${name}\n📋 Dose: ${dose}\n⏰ Time: ${time}${isSnooze ? ' (Snoozed)' : ''}\n📅 Day ${day + 1} of ${duration}`,
-              sound: true,
-              priority: 'max',
-              vibrate: [0, 250, 250, 250],
-              categoryIdentifier: 'MEDICATION_REMINDER',
-              data: {
-                medicationName: name,
-                dose: dose,
-                scheduledTime: time,
-                day: day + 1,
-                duration: duration,
-                type: 'medication_reminder',
-                shouldPlayAlarm: true,
-                isSnooze: isSnooze,
-                notificationId: notificationId, // Include ID
-              },
-            },
-            trigger: {
-              type: 'date',
-              date: notificationDate,
-            },
-          });
-        }
-      }
+  const selectImage = async () => {
+    const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permissionResult.granted) {
+      Alert.alert('Permission required', 'Please allow access to your photo library to select an image.');
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      aspect: [4, 3],
+      quality: 1,
+    });
+
+    if (!result.canceled && result.assets[0]) {
+      setNewMedication({
+        ...newMedication,
+        image: result.assets[0].uri
+      });
     }
   };
 
   const addMedication = async () => {
-    if (!formData.name || !formData.dose || formData.times.some(t => !t)) {
-      Alert.alert('Error', 'Please fill in all fields');
+    if (!newMedication.name || !newMedication.dosage || !newMedication.frequency || newMedication.times.length === 0) {
+      Alert.alert('Error', 'Please fill in all fields and add at least one time.');
       return;
     }
 
-    const newMedication: Medication = {
+    const medication: Medication = {
       id: Date.now().toString(),
-      name: formData.name,
-      dose: formData.dose,
-      timesPerDay: formData.timesPerDay,
-      scheduledTimes: formData.times.filter(t => t),
-      duration: formData.duration,
-      startDate: new Date().toISOString(),
-      imageUri: formData.imageUri,
+      name: newMedication.name,
+      dosage: newMedication.dosage,
+      frequency: newMedication.frequency,
+      times: newMedication.times.filter(time => time.trim() !== ''),
+      image: newMedication.image,
       isLiked: false,
     };
 
-    try {
-      const updatedMedications = [...medications, newMedication];
-      setMedications(updatedMedications);
-      await saveMedications(updatedMedications);
-      await scheduleNotifications(newMedication);
+    const updatedMedications = [...medications, medication];
+    setMedications(updatedMedications);
+    await AsyncStorage.setItem('medications', JSON.stringify(updatedMedications));
 
-      // Reset form and close modal
-      setFormData({
-        name: '',
-        dose: '',
-        timesPerDay: 1,
-        times: ['12:00 PM'],
-        duration: 7,
-        imageUri: '',
-      });
-      setShowAddModal(false);
+    // Schedule notifications for this medication
+    await scheduleNotificationsForMedication(medication);
 
-      Alert.alert('Success', 'Medication reminder added successfully!');
-    } catch (error) {
-      Alert.alert('Error', 'Failed to save medication');
-    }
-  };
-
-  const pickImage = async () => {
-    Alert.alert(
-      'Select Image',
-      'Choose how you want to add the medicine image',
-      [
-        {
-          text: 'Camera',
-          onPress: openCamera,
-        },
-        {
-          text: 'Gallery',
-          onPress: openGallery,
-        },
-        {
-          text: 'Cancel',
-          style: 'cancel',
-        },
-      ]
-    );
-  };
-
-  const openCamera = async () => {
-    const { status } = await ImagePicker.requestCameraPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert('Permission needed', 'Camera permission is required to take photos');
-      return;
-    }
-
-    const result = await ImagePicker.launchCameraAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
-      aspect: [4, 3],
-      quality: 1,
+    // Reset form
+    setNewMedication({
+      name: '',
+      dosage: '',
+      frequency: '',
+      times: [],
+      image: '',
     });
 
-    if (!result.canceled) {
-      setFormData({ ...formData, imageUri: result.assets[0].uri });
-    }
+    setShowAddModal(false);
+
+    // Scroll to top to show the new medication
+    setTimeout(() => {
+      scrollViewRef.current?.scrollTo({ y: 0, animated: true });
+    }, 100);
+
+    Alert.alert('Success', 'Medication added successfully!');
   };
 
-  const openGallery = async () => {
-    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert('Permission needed', 'Gallery permission is required to select photos');
-      return;
-    }
-
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
-      aspect: [4, 3],
-      quality: 1,
-    });
-
-    if (!result.canceled) {
-      setFormData({ ...formData, imageUri: result.assets[0].uri });
-    }
-  };
-
-  const pickImageForEdit = async () => {
-    Alert.alert(
-      'Select Image',
-      'Choose how you want to add the medicine image',
-      [
-        {
-          text: 'Camera',
-          onPress: openCameraForEdit,
-        },
-        {
-          text: 'Gallery',
-          onPress: openGalleryForEdit,
-        },
-        {
-          text: 'Cancel',
-          style: 'cancel',
-        },
-      ]
-    );
-  };
-
-  const openCameraForEdit = async () => {
-    const { status } = await ImagePicker.requestCameraPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert('Permission needed', 'Camera permission is required to take photos');
-      return;
-    }
-
-    const result = await ImagePicker.launchCameraAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
-      aspect: [4, 3],
-      quality: 1,
-    });
-
-    if (!result.canceled && editingMedication) {
-      setEditingMedication({ ...editingMedication, imageUri: result.assets[0].uri });
-    }
-  };
-
-  const openGalleryForEdit = async () => {
-    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert('Permission needed', 'Gallery permission is required to select photos');
-      return;
-    }
-
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
-      aspect: [4, 3],
-      quality: 1,
-    });
-
-    if (!result.canceled && editingMedication) {
-      setEditingMedication({ ...editingMedication, imageUri: result.assets[0].uri });
-    }
-  };
-
-  const pickCustomRingtone = async () => {
+  const scheduleNotificationsForMedication = async (medication: Medication) => {
     try {
-      const result = await DocumentPicker.getDocumentAsync({
-        type: 'audio/*',
-        copyToCacheDirectory: true,
-      });
+      for (const time of medication.times) {
+        const [hours, minutes] = time.split(':').map(Number);
 
-      if (!result.canceled && result.assets && result.assets.length > 0) {
-        const audioFile = result.assets[0];
-        setCustomRingtone(audioFile.uri);
-        await AsyncStorage.setItem('customRingtone', audioFile.uri);
-        Alert.alert('Success', 'Custom ringtone selected successfully!');
+        await Notifications.scheduleNotificationAsync({
+          content: {
+            title: `Time for ${medication.name}`,
+            body: `Take ${medication.dosage} - ${medication.frequency}`,
+            sound: 'default',
+            priority: Notifications.AndroidNotificationPriority.HIGH,
+            sticky: true,
+            data: { medicationId: medication.id, medicationName: medication.name },
+          },
+          trigger: {
+            hour: hours,
+            minute: minutes,
+            repeats: true,
+          },
+        });
       }
     } catch (error) {
-      Alert.alert('Error', 'Failed to select audio file. Please try again.');
-      console.log('Error picking ringtone:', error);
+      console.error('Error scheduling notifications:', error);
     }
   };
 
-  const testCustomRingtone = async () => {
-    if (!customRingtone) {
-      Alert.alert('No Ringtone', 'Please select a custom ringtone first.');
-      return;
-    }
-
-    try {
-      const { sound } = await Audio.Sound.createAsync(
-        { uri: customRingtone },
-        { shouldPlay: true, volume: 1.0 }
-      );
-
-      // Stop after 3 seconds
-      setTimeout(async () => {
-        await sound.stopAsync();
-        await sound.unloadAsync();
-      }, 3000);
-
-    } catch (error) {
-      Alert.alert('Error', 'Failed to play custom ringtone. The file might be corrupted or unsupported.');
-      console.log('Error testing ringtone:', error);
-    }
+  const handleMedicationPress = (medication: Medication) => {
+    setExpandedMedication(expandedMedication === medication.id ? null : medication.id);
   };
 
-  const loadSettings = async () => {
-    try {
-      const savedRingtone = await AsyncStorage.getItem('customRingtone');
-      const savedDarkMode = await AsyncStorage.getItem('isDarkMode');
-
-      if (savedRingtone) {
-        setCustomRingtone(savedRingtone);
-      }
-      if (savedDarkMode) {
-        setIsDarkMode(JSON.parse(savedDarkMode));
-      }
-    } catch (error) {
-      console.log('Error loading settings:', error);
-    }
+  const containerStyle = {
+    backgroundColor: isDarkMode ? '#1a1a1a' : '#f5f5f5',
   };
 
-  const saveSettings = async () => {
-    try {
-      await AsyncStorage.setItem('isDarkMode', JSON.stringify(isDarkMode));
-      if (customRingtone) {
-        await AsyncStorage.setItem('customRingtone', customRingtone);
-      }
-    } catch (error) {
-      console.log('Error saving settings:', error);
-    }
+  const cardStyle = {
+    backgroundColor: isDarkMode ? '#2a2a2a' : '#ffffff',
+  };
+
+  const textStyle = {
+    color: isDarkMode ? '#ffffff' : '#333333',
+  };
+
+  const subTextStyle = {
+    color: isDarkMode ? '#cccccc' : '#666666',
   };
 
   return (
-    <View style={styles.container}>
-      <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
-        <Text style={styles.title}>My Medications</Text>
+    <View style={[styles.container, containerStyle]}>
+      <Navbar
+        title="My Medications"
+        onSearchPress={() => setShowSearchModal(true)}
+        onSettingsPress={() => setShowSettingsModal(true)}
+        isDarkMode={isDarkMode}
+      />
 
+      <ScrollView ref={scrollViewRef} style={styles.scrollView}>
         {medications.length === 0 ? (
           <View style={styles.emptyState}>
-            <Text style={styles.emptyStateText}>No medications added yet</Text>
-            <Text style={styles.emptyStateSubtext}>Tap the + button below to add your first medication reminder</Text>
+            <Text style={[styles.emptyText, subTextStyle]}>
+              No medications added yet.{'\n'}Tap the + button to add your first medication.
+            </Text>
           </View>
         ) : (
-          <View style={styles.medicationsSection}>
-            {medications.map((med) => (
-              <TouchableOpacity
-                key={med.id}
-                style={styles.medicationCard}
-                onPress={() => {
-                  setSelectedMedication(med);
-                  setShowDetailModal(true);
-                }}
-              >
-                {med.imageUri && (
-                  <Image source={{ uri: med.imageUri }} style={styles.medicationImage} />
+          medications.map((medication) => (
+            <TouchableOpacity
+              key={medication.id}
+              style={[styles.medicationCard, cardStyle]}
+              onPress={() => handleMedicationPress(medication)}
+            >
+              <View style={styles.medicationHeader}>
+                {medication.image && (
+                  <Image source={{ uri: medication.image }} style={styles.medicationImage} />
                 )}
                 <View style={styles.medicationInfo}>
-                  <View style={styles.medicationHeader}>
-                    <Text style={styles.medicationName}>{med.name}</Text>
-                    <View style={styles.actionButtons}>
-                      <TouchableOpacity
-                        style={styles.actionButton}
-                        onPress={() => openEditModal(med)}
-                      >
-                        <Text style={styles.editIcon}>✏️</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        style={styles.actionButton}
-                        onPress={() => toggleLike(med.id)}
-                      >
-                        <Text style={styles.likeIcon}>
-                          {med.isLiked ? '❤️' : '🤍'}
-                        </Text>
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                  <Text style={styles.medicationDetail}>Dose: {med.dose}</Text>
-                  <Text style={styles.medicationDetail}>
-                    Times: {med.scheduledTimes.join(', ')}
-                  </Text>
-                  <Text style={styles.medicationDetail}>Duration: {med.duration} days</Text>
+                  <Text style={[styles.medicationName, textStyle]}>{medication.name}</Text>
+                  <Text style={[styles.medicationDetail, subTextStyle]}>{medication.dosage}</Text>
+                  <Text style={[styles.medicationDetail, subTextStyle]}>{medication.frequency}</Text>
                 </View>
-              </TouchableOpacity>
-            ))}
-          </View>
+                <View style={styles.medicationActions}>
+                  <TouchableOpacity
+                    onPress={() => startEdit(medication)}
+                    style={styles.actionButton}
+                  >
+                    <IconSymbol name="pencil" size={20} color={isDarkMode ? '#ffffff' : '#333333'} />
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => toggleLike(medication.id)}
+                    style={styles.actionButton}
+                  >
+                    <IconSymbol 
+                      name={medication.isLiked ? "heart.fill" : "heart"} 
+                      size={20} 
+                      color={medication.isLiked ? "#FF3B30" : (isDarkMode ? '#ffffff' : '#333333')} 
+                    />
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              {expandedMedication === medication.id && (
+                <View style={styles.expandedContent}>
+                  <Text style={[styles.timesTitle, textStyle]}>Scheduled Times:</Text>
+                  {medication.times.map((time, index) => (
+                    <Text key={index} style={[styles.timeText, subTextStyle]}>
+                      • {time}
+                    </Text>
+                  ))}
+                  <TouchableOpacity
+                    style={styles.deleteButton}
+                    onPress={() => deleteMedication(medication.id)}
+                  >
+                    <Text style={styles.deleteButtonText}>Delete Medication</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+            </TouchableOpacity>
+          ))
         )}
       </ScrollView>
 
@@ -808,7 +415,7 @@ export default function Home() {
         style={styles.floatingAddButton}
         onPress={() => setShowAddModal(true)}
       >
-        <Text style={styles.addButtonText}>+</Text>
+        <IconSymbol name="plus" size={24} color="#ffffff" />
       </TouchableOpacity>
 
       {/* Add Medication Modal */}
@@ -816,211 +423,220 @@ export default function Home() {
         visible={showAddModal}
         animationType="slide"
         presentationStyle="pageSheet"
-        onRequestClose={() => setShowAddModal(false)}
       >
-        <ScrollView style={styles.modalContainer}>
-          <View style={styles.modalHeader}>
-            <TouchableOpacity onPress={() => setShowAddModal(false)}>
-              <Text style={styles.modalCloseButton}>✕</Text>
+        <View style={[styles.modalContainer, { backgroundColor: isDarkMode ? '#1a1a1a' : '#ffffff' }]}>
+          <View style={[styles.modalHeader, { borderBottomColor: isDarkMode ? '#333' : '#eee' }]}>
+            <Text style={[styles.modalTitle, { color: isDarkMode ? '#fff' : '#333' }]}>Add Medication</Text>
+            <TouchableOpacity onPress={() => setShowAddModal(false)} style={styles.closeButton}>
+              <IconSymbol name="xmark" size={24} color={isDarkMode ? '#ffffff' : '#333333'} />
             </TouchableOpacity>
-            <Text style={styles.modalTitle}>Add New Medication</Text>
-            <View style={styles.placeholder} />
           </View>
 
-          <View style={styles.form}>
-            <Text style={styles.label}>Medicine Image</Text>
-            <TouchableOpacity style={styles.imageButton} onPress={pickImage}>
-              {formData.imageUri ? (
-                <Image source={{ uri: formData.imageUri }} style={styles.medicineImage} />
-              ) : (
-                <View style={styles.imagePlaceholder}>
-                  <Text style={styles.imagePlaceholderText}>📷 Add Photo</Text>
-                  <Text style={styles.imagePlaceholderSubtext}>Tap to take photo or select from gallery</Text>
-                </View>
-              )}
-            </TouchableOpacity>
-
-            <Text style={styles.label}>Medicine Name</Text>
-            <TextInput
-              style={styles.input}
-              value={formData.name}
-              onChangeText={(text) => setFormData({ ...formData, name: text })}
-              placeholder="Enter medicine name"
-            />
-
-            <Text style={styles.label}>Dose Amount</Text>
-            <TextInput
-              style={styles.input}
-              value={formData.dose}
-              onChangeText={(text) => setFormData({ ...formData, dose: text })}
-              placeholder="e.g., 1 tablet, 2 spoons"
-            />
-
-            <Text style={styles.label}>Duration (days)</Text>
-            <TextInput
-              style={styles.input}
-              value={formData.duration.toString()}
-              onChangeText={(text) => setFormData({ ...formData, duration: parseInt(text) || 7 })}
-              placeholder="Number of days"
-              keyboardType="numeric"
-            />
-
-            <Text style={styles.label}>Scheduled Times</Text>
-            {formData.times.map((time, index) => (
-              <TextInput
-                key={index}
-                style={styles.input}
-                value={time}
-                onChangeText={(text) => {
-                  const newTimes = [...formData.times];
-                  newTimes[index] = text;
-                  setFormData({ ...formData, times: newTimes });
-                }}
-                placeholder="12:00 PM"
-              />
-            ))}
-
-            <TouchableOpacity
-              style={styles.addTimeButton}
-              onPress={() => {
-                setFormData({
-                  ...formData,
-                  timesPerDay: formData.timesPerDay + 1,
-                  times: [...formData.times, '12:00 PM'],
-                });
-              }}
-            >
-              <Text style={styles.addTimeText}>+ Add Another Time</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.submitButton} onPress={addMedication}>
-              <Text style={styles.submitText}>Add Medication</Text>
-            </TouchableOpacity>
-          </View>
-        </ScrollView>
-      </Modal>
-
-      {/* Edit Medication Modal */}
-      <Modal
-        visible={showEditModal}
-        animationType="slide"
-        presentationStyle="pageSheet"
-        onRequestClose={() => setShowEditModal(false)}
-      >
-        {editingMedication && (
-          <ScrollView style={styles.modalContainer}>
-            <View style={styles.modalHeader}>
-              <TouchableOpacity onPress={() => setShowEditModal(false)}>
-                <Text style={styles.modalCloseButton}>✕</Text>
-              </TouchableOpacity>
-              <Text style={styles.modalTitle}>Edit Medication</Text>
-              <TouchableOpacity onPress={() => deleteMedication(editingMedication.id)}>
-                <Text style={styles.deleteButton}>🗑️</Text>
-              </TouchableOpacity>
-            </View>
-
+          <ScrollView style={styles.modalContent}>
             <View style={styles.form}>
-              <Text style={styles.label}>Medicine Image</Text>
-              <TouchableOpacity style={styles.imageButton} onPress={pickImageForEdit}>
-                {editingMedication.imageUri ? (
-                  <Image source={{ uri: editingMedication.imageUri }} style={styles.medicineImage} />
+              <Text style={[styles.label, { color: isDarkMode ? '#fff' : '#333' }]}>Medication Name</Text>
+              <TextInput
+                style={[
+                  styles.input,
+                  {
+                    backgroundColor: isDarkMode ? '#333' : '#fff',
+                    color: isDarkMode ? '#fff' : '#333',
+                    borderColor: isDarkMode ? '#555' : '#ddd',
+                  }
+                ]}
+                value={newMedication.name}
+                onChangeText={(text) => setNewMedication({ ...newMedication, name: text })}
+                placeholder="Enter medication name"
+                placeholderTextColor={isDarkMode ? '#999' : '#666'}
+              />
+
+              <Text style={[styles.label, { color: isDarkMode ? '#fff' : '#333' }]}>Dosage</Text>
+              <TextInput
+                style={[
+                  styles.input,
+                  {
+                    backgroundColor: isDarkMode ? '#333' : '#fff',
+                    color: isDarkMode ? '#fff' : '#333',
+                    borderColor: isDarkMode ? '#555' : '#ddd',
+                  }
+                ]}
+                value={newMedication.dosage}
+                onChangeText={(text) => setNewMedication({ ...newMedication, dosage: text })}
+                placeholder="e.g., 500mg"
+                placeholderTextColor={isDarkMode ? '#999' : '#666'}
+              />
+
+              <Text style={[styles.label, { color: isDarkMode ? '#fff' : '#333' }]}>Frequency</Text>
+              <TextInput
+                style={[
+                  styles.input,
+                  {
+                    backgroundColor: isDarkMode ? '#333' : '#fff',
+                    color: isDarkMode ? '#fff' : '#333',
+                    borderColor: isDarkMode ? '#555' : '#ddd',
+                  }
+                ]}
+                value={newMedication.frequency}
+                onChangeText={(text) => setNewMedication({ ...newMedication, frequency: text })}
+                placeholder="e.g., Twice daily"
+                placeholderTextColor={isDarkMode ? '#999' : '#666'}
+              />
+
+              <TouchableOpacity style={styles.imageButton} onPress={selectImage}>
+                {newMedication.image ? (
+                  <Image source={{ uri: newMedication.image }} style={styles.medicineImage} />
                 ) : (
                   <View style={styles.imagePlaceholder}>
-                    <Text style={styles.imagePlaceholderText}>📷 Add Photo</Text>
-                    <Text style={styles.imagePlaceholderSubtext}>Tap to take photo or select from gallery</Text>
+                    <Text style={styles.imagePlaceholderText}>📷</Text>
+                    <Text style={styles.imagePlaceholderSubtext}>Tap to add image</Text>
                   </View>
                 )}
               </TouchableOpacity>
 
-              <Text style={styles.label}>Medicine Name</Text>
-              <TextInput
-                style={styles.input}
-                value={editingMedication.name}
-                onChangeText={(text) => setEditingMedication({ ...editingMedication, name: text })}
-                placeholder="Enter medicine name"
-              />
-
-              <Text style={styles.label}>Dose Amount</Text>
-              <TextInput
-                style={styles.input}
-```text
-                value={editingMedication.dose}
-                onChangeText={(text) => setEditingMedication({ ...editingMedication, dose: text })}
-                placeholder="e.g., 1 tablet, 2 spoons"
-              />
-
-              <Text style={styles.label}>Duration (days)</Text>
-              <TextInput
-                style={styles.input}
-                value={editingMedication.duration.toString()}
-                onChangeText={(text) => setEditingMedication({ ...editingMedication, duration: parseInt(text) || 7 })}
-                placeholder="Number of days"
-                keyboardType="numeric"
-              />
-
-              <Text style={styles.label}>Scheduled Times</Text>
-              {editingMedication.scheduledTimes.map((time, index) => (
-                <TextInput
-                  key={index}
-                  style={styles.input}
-                  value={time}
-                  onChangeText={(text) => {
-                    const newTimes = [...editingMedication.scheduledTimes];
-                    newTimes[index] = text;
-                    setEditingMedication({ ...editingMedication, scheduledTimes: newTimes });
-                  }}
-                  placeholder="12:00 PM"
-                />
+              <Text style={[styles.label, { color: isDarkMode ? '#fff' : '#333' }]}>Times</Text>
+              {newMedication.times.map((time, index) => (
+                <View key={index} style={styles.timeInputContainer}>
+                  <TextInput
+                    style={[
+                      styles.timeInput,
+                      {
+                        backgroundColor: isDarkMode ? '#333' : '#fff',
+                        color: isDarkMode ? '#fff' : '#333',
+                        borderColor: isDarkMode ? '#555' : '#ddd',
+                      }
+                    ]}
+                    value={time}
+                    onChangeText={(text) => updateTime(index, text)}
+                    placeholder="HH:MM (e.g., 08:00)"
+                    placeholderTextColor={isDarkMode ? '#999' : '#666'}
+                  />
+                  <TouchableOpacity
+                    style={styles.removeTimeButton}
+                    onPress={() => removeTime(index)}
+                  >
+                    <Text style={styles.removeTimeText}>Remove</Text>
+                  </TouchableOpacity>
+                </View>
               ))}
 
-              <TouchableOpacity style={styles.submitButton} onPress={updateMedication}>
-                <Text style={styles.submitText}>Update Medication</Text>
+              <TouchableOpacity style={styles.addTimeButton} onPress={addTime}>
+                <Text style={styles.addTimeButtonText}>+ Add Time</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity style={styles.submitButton} onPress={addMedication}>
+                <Text style={styles.submitButtonText}>Add Medication</Text>
               </TouchableOpacity>
             </View>
           </ScrollView>
-        )}
+        </View>
       </Modal>
 
-      {/* Medication Detail Modal */}
+      {/* Edit Medication Modal */}
       <Modal
-        visible={showDetailModal}
+        visible={editingMedication !== null}
         animationType="slide"
         presentationStyle="pageSheet"
-        onRequestClose={() => setShowDetailModal(false)}
       >
-        {selectedMedication && (
-          <ScrollView style={styles.modalContainer}>
-            <View style={styles.modalHeader}>
-              <TouchableOpacity onPress={() => setShowDetailModal(false)}>
-                <Text style={styles.modalCloseButton}>✕</Text>
-              </TouchableOpacity>
-              <Text style={styles.modalTitle}>Medication Details</Text>
-              <View style={styles.placeholder} />
-            </View>
+        <View style={[styles.modalContainer, { backgroundColor: isDarkMode ? '#1a1a1a' : '#ffffff' }]}>
+          <View style={[styles.modalHeader, { borderBottomColor: isDarkMode ? '#333' : '#eee' }]}>
+            <Text style={[styles.modalTitle, { color: isDarkMode ? '#fff' : '#333' }]}>Edit Medication</Text>
+            <TouchableOpacity onPress={cancelEdit} style={styles.closeButton}>
+              <IconSymbol name="xmark" size={24} color={isDarkMode ? '#ffffff' : '#333333'} />
+            </TouchableOpacity>
+          </View>
 
-            <View style={styles.detailContainer}>
-              {selectedMedication.imageUri && (
-                <Image source={{ uri: selectedMedication.imageUri }} style={styles.detailImage} />
-              )}
+          <ScrollView style={styles.modalContent}>
+            {editingMedication && (
+              <View style={styles.form}>
+                <Text style={[styles.label, { color: isDarkMode ? '#fff' : '#333' }]}>Medication Name</Text>
+                <TextInput
+                  style={[
+                    styles.input,
+                    {
+                      backgroundColor: isDarkMode ? '#333' : '#fff',
+                      color: isDarkMode ? '#fff' : '#333',
+                      borderColor: isDarkMode ? '#555' : '#ddd',
+                    }
+                  ]}
+                  value={editingMedication.name}
+                  onChangeText={(text) => setEditingMedication({ ...editingMedication, name: text })}
+                  placeholder="Enter medication name"
+                  placeholderTextColor={isDarkMode ? '#999' : '#666'}
+                />
 
-              <View style={styles.detailInfo}>
-                <Text style={styles.detailName}>{selectedMedication.name}</Text>
-                <Text style={styles.detailText}>💊 Dose: {selectedMedication.dose}</Text>
-                <Text style={styles.detailText}>⏰ Times: {selectedMedication.scheduledTimes.join(', ')}</Text>
-                <Text style={styles.detailText}>📅 Duration: {selectedMedication.duration} days</Text>
-                <Text style={styles.detailText}>🗓️ Started: {new Date(selectedMedication.startDate).toLocaleDateString()}</Text>
-                <Text style={styles.detailText}>📈 Times per day: {selectedMedication.timesPerDay}</Text>
+                <Text style={[styles.label, { color: isDarkMode ? '#fff' : '#333' }]}>Dosage</Text>
+                <TextInput
+                  style={[
+                    styles.input,
+                    {
+                      backgroundColor: isDarkMode ? '#333' : '#fff',
+                      color: isDarkMode ? '#fff' : '#333',
+                      borderColor: isDarkMode ? '#555' : '#ddd',
+                    }
+                  ]}
+                  value={editingMedication.dosage}
+                  onChangeText={(text) => setEditingMedication({ ...editingMedication, dosage: text })}
+                  placeholder="e.g., 500mg"
+                  placeholderTextColor={isDarkMode ? '#999' : '#666'}
+                />
 
-                <View style={styles.statusContainer}>
-                  <Text style={styles.statusText}>
-                    Status: {new Date() > new Date(new Date(selectedMedication.startDate).getTime() + selectedMedication.duration * 24 * 60 * 60 * 1000) ? '✅ Completed' : '🔄 Active'}
-                  </Text>
+                <Text style={[styles.label, { color: isDarkMode ? '#fff' : '#333' }]}>Frequency</Text>
+                <TextInput
+                  style={[
+                    styles.input,
+                    {
+                      backgroundColor: isDarkMode ? '#333' : '#fff',
+                      color: isDarkMode ? '#fff' : '#333',
+                      borderColor: isDarkMode ? '#555' : '#ddd',
+                    }
+                  ]}
+                  value={editingMedication.frequency}
+                  onChangeText={(text) => setEditingMedication({ ...editingMedication, frequency: text })}
+                  placeholder="e.g., Twice daily"
+                  placeholderTextColor={isDarkMode ? '#999' : '#666'}
+                />
+
+                <TouchableOpacity style={styles.imageButton} onPress={selectImageForEdit}>
+                  {editingMedication.image ? (
+                    <Image source={{ uri: editingMedication.image }} style={styles.medicineImage} />
+                  ) : (
+                    <View style={styles.imagePlaceholder}>
+                      <Text style={styles.imagePlaceholderText}>📷</Text>
+                      <Text style={styles.imagePlaceholderSubtext}>Tap to add image</Text>
+                    </View>
+                  )}
+                </TouchableOpacity>
+
+                <View style={styles.editActions}>
+                  <TouchableOpacity style={styles.cancelButton} onPress={cancelEdit}>
+                    <Text style={styles.cancelButtonText}>Cancel</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.saveButton} onPress={saveEdit}>
+                    <Text style={styles.saveButtonText}>Save Changes</Text>
+                  </TouchableOpacity>
                 </View>
               </View>
-            </View>
+            )}
           </ScrollView>
-        )}
+        </View>
       </Modal>
+
+      {/* Search Modal */}
+      <SearchModal
+        visible={showSearchModal}
+        onClose={() => setShowSearchModal(false)}
+        medications={medications}
+        onMedicationPress={handleMedicationPress}
+        isDarkMode={isDarkMode}
+      />
+
+      {/* Settings Modal */}
+      <SettingsModal
+        visible={showSettingsModal}
+        onClose={() => setShowSettingsModal(false)}
+        isDarkMode={isDarkMode}
+        onToggleDarkMode={toggleDarkMode}
+      />
     </View>
   );
 }
@@ -1028,100 +644,96 @@ export default function Home() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
   },
   scrollView: {
     flex: 1,
-    padding: 20,
-    paddingBottom: 100,
-  },
-  title: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    textAlign: 'center',
-    marginBottom: 30,
-    color: '#333',
-    marginTop: 40,
+    paddingHorizontal: 20,
   },
   emptyState: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingTop: 100,
+    paddingVertical: 100,
   },
-  emptyStateText: {
-    fontSize: 18,
-    color: '#666',
-    marginBottom: 10,
-  },
-  emptyStateSubtext: {
-    fontSize: 14,
-    color: '#999',
+  emptyText: {
+    fontSize: 16,
     textAlign: 'center',
-    paddingHorizontal: 40,
-  },
-  medicationsSection: {
-    marginTop: 20,
-    paddingBottom: 100,
+    lineHeight: 24,
   },
   medicationCard: {
-    backgroundColor: 'white',
     borderRadius: 15,
-    marginBottom: 20,
+    padding: 20,
+    marginVertical: 8,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.1,
     shadowRadius: 8,
     elevation: 5,
-    overflow: 'hidden',
-  },
-  medicationImage: {
-    width: '100%',
-    height: 200,
-    resizeMode: 'cover',
-  },
-  medicationInfo: {
-    padding: 20,
   },
   medicationHeader: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 10,
   },
-  medicationName: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#333',
+  medicationImage: {
+    width: 60,
+    height: 60,
+    borderRadius: 8,
+    marginRight: 15,
+  },
+  medicationInfo: {
     flex: 1,
   },
-  actionButtons: {
+  medicationName: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginBottom: 4,
+  },
+  medicationDetail: {
+    fontSize: 14,
+    marginBottom: 2,
+  },
+  medicationActions: {
     flexDirection: 'row',
-    gap: 10,
+    alignItems: 'center',
   },
   actionButton: {
     padding: 8,
-    borderRadius: 20,
-    backgroundColor: '#f0f0f0',
+    marginLeft: 8,
   },
-  editIcon: {
-    fontSize: 16,
+  expandedContent: {
+    marginTop: 20,
+    paddingTop: 20,
+    borderTopWidth: 1,
+    borderTopColor: '#eee',
   },
-  likeIcon: {
+  timesTitle: {
     fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 10,
   },
-  medicationDetail: {
+  timeText: {
+    fontSize: 14,
+    marginBottom: 4,
+  },
+  deleteButton: {
+    backgroundColor: '#FF3B30',
+    padding: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginTop: 15,
+  },
+  deleteButtonText: {
+    color: '#ffffff',
     fontSize: 16,
-    color: '#666',
-    marginBottom: 5,
+    fontWeight: '600',
   },
   floatingAddButton: {
     position: 'absolute',
     bottom: 100,
-    right: 30,
-    width: 60,
-    height: 60,
-    borderRadius: 30,
+    right: 20,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
     backgroundColor: '#007AFF',
     justifyContent: 'center',
     alignItems: 'center',
@@ -1131,60 +743,47 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 8,
   },
-  addButtonText: {
-    fontSize: 30,
-    color: 'white',
-    fontWeight: 'bold',
-  },
   modalContainer: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
   },
   modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 20,
-    backgroundColor: 'white',
+    paddingHorizontal: 20,
+    paddingVertical: 15,
     borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
-  },
-  modalCloseButton: {
-    fontSize: 24,
-    color: '#666',
-    fontWeight: 'bold',
+    paddingTop: 50,
   },
   modalTitle: {
     fontSize: 20,
     fontWeight: 'bold',
-    color: '#333',
   },
-  deleteButton: {
-    fontSize: 24,
+  closeButton: {
+    padding: 8,
   },
-  placeholder: {
-    width: 24,
+  modalContent: {
+    flex: 1,
+    paddingHorizontal: 20,
   },
   form: {
-    padding: 20,
+    paddingVertical: 20,
   },
   label: {
     fontSize: 16,
     fontWeight: '600',
     marginBottom: 8,
-    color: '#333',
+    marginTop: 15,
   },
   input: {
     borderWidth: 1,
-    borderColor: '#ddd',
     borderRadius: 8,
     padding: 12,
-    marginBottom: 15,
     fontSize: 16,
-    backgroundColor: 'white',
+    marginBottom: 10,
   },
   imageButton: {
-    marginBottom: 15,
+    marginVertical: 15,
   },
   medicineImage: {
     width: '100%',
@@ -1204,80 +803,89 @@ const styles = StyleSheet.create({
     backgroundColor: '#f9f9f9',
   },
   imagePlaceholderText: {
-    fontSize: 24,
+    fontSize: 40,
     marginBottom: 5,
   },
   imagePlaceholderSubtext: {
     fontSize: 14,
     color: '#666',
-    textAlign: 'center',
+  },
+  timeInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  timeInput: {
+    flex: 1,
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: 12,
+    fontSize: 16,
+    marginRight: 10,
+  },
+  removeTimeButton: {
+    backgroundColor: '#FF3B30',
+    paddingHorizontal: 15,
+    paddingVertical: 12,
+    borderRadius: 8,
+  },
+  removeTimeText: {
+    color: '#ffffff',
+    fontWeight: '600',
   },
   addTimeButton: {
     backgroundColor: '#007AFF',
-    padding: 10,
+    padding: 15,
     borderRadius: 8,
     alignItems: 'center',
-    marginBottom: 15,
+    marginVertical: 10,
   },
-  addTimeText: {
-    color: 'white',
+  addTimeButtonText: {
+    color: '#ffffff',
     fontSize: 16,
+    fontWeight: '600',
   },
   submitButton: {
     backgroundColor: '#34C759',
     padding: 15,
     borderRadius: 8,
     alignItems: 'center',
+    marginTop: 20,
   },
-  submitText: {
-    color: 'white',
+  submitButtonText: {
+    color: '#ffffff',
     fontSize: 18,
     fontWeight: 'bold',
   },
-  detailContainer: {
-    padding: 20,
+  editActions: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 30,
   },
-  detailImage: {
-    width: '100%',
-    height: 250,
-    borderRadius: 15,
-    resizeMode: 'cover',
-    marginBottom: 20,
-  },
-  detailInfo: {
-    backgroundColor: 'white',
-    padding: 20,
-    borderRadius: 15,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  detailName: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 15,
-    textAlign: 'center',
-  },
-  detailText: {
-    fontSize: 16,
-    color: '#666',
-    marginBottom: 8,
-    lineHeight: 24,
-  },
-  statusContainer: {
-    marginTop: 15,
+  cancelButton: {
+    flex: 1,
+    backgroundColor: '#FF3B30',
     padding: 15,
-    backgroundColor: '#f0f8ff',
-    borderRadius: 10,
-    borderLeftWidth: 4,
-    borderLeftColor: '#007AFF',
+    borderRadius: 8,
+    alignItems: 'center',
+    marginRight: 10,
   },
-  statusText: {
+  cancelButtonText: {
+    color: '#ffffff',
     fontSize: 16,
     fontWeight: '600',
-    color: '#333',
+  },
+  saveButton: {
+    flex: 1,
+    backgroundColor: '#34C759',
+    padding: 15,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginLeft: 10,
+  },
+  saveButtonText: {
+    color: '#ffffff',
+    fontSize: 16,
+    fontWeight: '600',
   },
 });

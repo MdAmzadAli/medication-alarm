@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import {
   View,
@@ -7,11 +8,14 @@ import {
   TouchableOpacity,
   Alert,
   StyleSheet,
+  Modal,
+  TextInput,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Notifications from 'expo-notifications';
 import { Audio } from 'expo-av';
 import { useFocusEffect } from '@react-navigation/native';
+import * as ImagePicker from 'expo-image-picker';
 
 interface Medication {
   id: string;
@@ -22,11 +26,27 @@ interface Medication {
   duration: number;
   startDate: string;
   imageUri?: string;
+  isLiked?: boolean;
 }
 
 export default function Home() {
   const [medications, setMedications] = useState<Medication[]>([]);
   const [alarmSound, setAlarmSound] = useState<Audio.Sound | null>(null);
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [showDetailModal, setShowDetailModal] = useState(false);
+  const [selectedMedication, setSelectedMedication] = useState<Medication | null>(null);
+  const [editingMedication, setEditingMedication] = useState<Medication | null>(null);
+  const [showEditModal, setShowEditModal] = useState(false);
+
+  // Form data for adding new medication
+  const [formData, setFormData] = useState({
+    name: '',
+    dose: '',
+    timesPerDay: 1,
+    times: ['12:00 PM'],
+    duration: 7,
+    imageUri: '',
+  });
 
   // Keep track of individual alarm sounds by notification ID
   const notificationAlarms = React.useRef<Map<string, Audio.Sound>>(new Map());
@@ -205,11 +225,6 @@ export default function Home() {
     }
   };
 
-  const playAlarmSound = async () => {
-    // Default alarm (for backwards compatibility)
-    await playNotificationAlarm('default_alarm');
-  };
-
   const stopSpecificNotificationAlarm = (notificationId: string) => {
     try {
       const sound = notificationAlarms.current.get(notificationId);
@@ -237,70 +252,6 @@ export default function Home() {
       }
     } catch (error) {
       console.log(`Error stopping alarm for notification ${notificationId}:`, error);
-    }
-  };
-
-  const stopAllGlobalAlarms = () => {
-    // IMMEDIATE stop - no async operations to prevent delays
-    try {
-      // Stop all tracked sound instances immediately
-      activeSounds.current.forEach(sound => {
-        try {
-          // Immediate stop without checking status to avoid delays
-          sound.stopAsync().catch(() => {});
-          sound.unloadAsync().catch(() => {});
-        } catch (e) {
-          // Ignore errors for immediate response
-        }
-      });
-      activeSounds.current.clear();
-      notificationAlarms.current.clear();
-      
-      // Stop current component alarm immediately
-      if (alarmSound) {
-        try {
-          alarmSound.stopAsync().catch(() => {});
-          alarmSound.unloadAsync().catch(() => {});
-        } catch (e) {
-          // Ignore errors for immediate response  
-        }
-        setAlarmSound(null);
-      }
-      
-      console.log('All alarms stopped immediately');
-    } catch (error) {
-      console.log('Error stopping all alarms:', error);
-    }
-  };
-
-  const stopAlarmSoundImmediate = () => {
-    // Immediate synchronous stop without await to prevent delays
-    stopAllGlobalAlarms();
-  };
-
-  const stopAlarmSound = async () => {
-    try {
-      // Stop the current state alarm
-      if (alarmSound) {
-        const status = await alarmSound.getStatusAsync();
-        if (status.isLoaded) {
-          await alarmSound.stopAsync();
-          await alarmSound.unloadAsync();
-        }
-        setAlarmSound(null);
-      }
-      
-      // Stop the global reference alarm
-      if (globalAlarmSound.current) {
-        const status = await globalAlarmSound.current.getStatusAsync();
-        if (status.isLoaded) {
-          await globalAlarmSound.current.stopAsync();
-          await globalAlarmSound.current.unloadAsync();
-        }
-        globalAlarmSound.current = null;
-      }
-    } catch (error) {
-      console.log('Error stopping alarm sound:', error);
     }
   };
 
@@ -443,6 +394,14 @@ export default function Home() {
     }
   };
 
+  const toggleLike = async (id: string) => {
+    const updatedMedications = medications.map(med => 
+      med.id === id ? { ...med, isLiked: !med.isLiked } : med
+    );
+    setMedications(updatedMedications);
+    await saveMedications(updatedMedications);
+  };
+
   const deleteMedication = async (id: string) => {
     Alert.alert(
       'Delete Medication',
@@ -477,41 +436,446 @@ export default function Home() {
     );
   };
 
-  return (
-    <ScrollView style={styles.container}>
-      <Text style={styles.title}>My Medications</Text>
+  const openEditModal = (medication: Medication) => {
+    setEditingMedication(medication);
+    setShowEditModal(true);
+  };
 
-      {medications.length === 0 ? (
-        <View style={styles.emptyState}>
-          <Text style={styles.emptyStateText}>No medications added yet</Text>
-          <Text style={styles.emptyStateSubtext}>Tap the + button below to add your first medication reminder</Text>
-        </View>
-      ) : (
-        <View style={styles.medicationsSection}>
-          {medications.map((med) => (
-            <View key={med.id} style={styles.medicationCard}>
-              {med.imageUri && (
-                <Image source={{ uri: med.imageUri }} style={styles.medicationImage} />
+  const updateMedication = async () => {
+    if (!editingMedication) return;
+
+    const updatedMedications = medications.map(med => 
+      med.id === editingMedication.id ? editingMedication : med
+    );
+    setMedications(updatedMedications);
+    await saveMedications(updatedMedications);
+    setShowEditModal(false);
+    setEditingMedication(null);
+    Alert.alert('Success', 'Medication updated successfully!');
+  };
+
+  const scheduleNotifications = async (medication: Medication, isSnooze = false, snoozeMinutes = 0) => {
+    const { name, dose, scheduledTimes, duration } = medication;
+
+    for (let day = 0; day < duration; day++) {
+      for (const time of scheduledTimes) {
+        const [timePart, period] = time.split(' ');
+        const [hours, minutes] = timePart.split(':').map(Number);
+
+        // Convert to 24-hour format
+        let hour24 = hours;
+        if (period === 'PM' && hours !== 12) {
+          hour24 = hours + 12;
+        } else if (period === 'AM' && hours === 12) {
+          hour24 = 0;
+        }
+
+        const notificationDate = new Date();
+        notificationDate.setDate(notificationDate.getDate() + day);
+        notificationDate.setHours(hour24, minutes, 0, 0);
+
+        // Add snooze time if this is a snooze notification
+        if (isSnooze) {
+          notificationDate.setMinutes(notificationDate.getMinutes() + snoozeMinutes);
+        }
+
+        // Only schedule future notifications
+        if (notificationDate > new Date()) {
+          const notificationId = `medication_${medication.id}_${day}_${time}`; // Create unique ID
+
+          await Notifications.scheduleNotificationAsync({
+            identifier: notificationId,
+            content: {
+              title: isSnooze ? '⏰ MEDICATION SNOOZE REMINDER!' : '🚨 MEDICATION ALARM! 🚨',
+              body: `💊 ${name}\n📋 Dose: ${dose}\n⏰ Time: ${time}${isSnooze ? ' (Snoozed)' : ''}\n📅 Day ${day + 1} of ${duration}`,
+              sound: true,
+              priority: 'max',
+              vibrate: [0, 250, 250, 250],
+              categoryIdentifier: 'MEDICATION_REMINDER',
+              data: {
+                medicationName: name,
+                dose: dose,
+                scheduledTime: time,
+                day: day + 1,
+                duration: duration,
+                type: 'medication_reminder',
+                shouldPlayAlarm: true,
+                isSnooze: isSnooze,
+                notificationId: notificationId, // Include ID
+              },
+            },
+            trigger: {
+              type: 'date',
+              date: notificationDate,
+            },
+          });
+        }
+      }
+    }
+  };
+
+  const addMedication = async () => {
+    if (!formData.name || !formData.dose || formData.times.some(t => !t)) {
+      Alert.alert('Error', 'Please fill in all fields');
+      return;
+    }
+
+    const newMedication: Medication = {
+      id: Date.now().toString(),
+      name: formData.name,
+      dose: formData.dose,
+      timesPerDay: formData.timesPerDay,
+      scheduledTimes: formData.times.filter(t => t),
+      duration: formData.duration,
+      startDate: new Date().toISOString(),
+      imageUri: formData.imageUri,
+      isLiked: false,
+    };
+
+    try {
+      const updatedMedications = [...medications, newMedication];
+      setMedications(updatedMedications);
+      await saveMedications(updatedMedications);
+      await scheduleNotifications(newMedication);
+
+      // Reset form and close modal
+      setFormData({
+        name: '',
+        dose: '',
+        timesPerDay: 1,
+        times: ['12:00 PM'],
+        duration: 7,
+        imageUri: '',
+      });
+      setShowAddModal(false);
+      
+      Alert.alert('Success', 'Medication reminder added successfully!');
+    } catch (error) {
+      Alert.alert('Error', 'Failed to save medication');
+    }
+  };
+
+  const pickImage = async () => {
+    Alert.alert(
+      'Select Image',
+      'Choose how you want to add the medicine image',
+      [
+        {
+          text: 'Camera',
+          onPress: openCamera,
+        },
+        {
+          text: 'Gallery',
+          onPress: openGallery,
+        },
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+      ]
+    );
+  };
+
+  const openCamera = async () => {
+    const { status } = await ImagePicker.requestCameraPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Permission needed', 'Camera permission is required to take photos');
+      return;
+    }
+
+    const result = await ImagePicker.launchCameraAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      aspect: [4, 3],
+      quality: 1,
+    });
+
+    if (!result.canceled) {
+      setFormData({ ...formData, imageUri: result.assets[0].uri });
+    }
+  };
+
+  const openGallery = async () => {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Permission needed', 'Gallery permission is required to select photos');
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      aspect: [4, 3],
+      quality: 1,
+    });
+
+    if (!result.canceled) {
+      setFormData({ ...formData, imageUri: result.assets[0].uri });
+    }
+  };
+
+  return (
+    <View style={styles.container}>
+      <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
+        <Text style={styles.title}>My Medications</Text>
+
+        {medications.length === 0 ? (
+          <View style={styles.emptyState}>
+            <Text style={styles.emptyStateText}>No medications added yet</Text>
+            <Text style={styles.emptyStateSubtext}>Tap the + button below to add your first medication reminder</Text>
+          </View>
+        ) : (
+          <View style={styles.medicationsSection}>
+            {medications.map((med) => (
+              <TouchableOpacity
+                key={med.id}
+                style={styles.medicationCard}
+                onPress={() => {
+                  setSelectedMedication(med);
+                  setShowDetailModal(true);
+                }}
+              >
+                {med.imageUri && (
+                  <Image source={{ uri: med.imageUri }} style={styles.medicationImage} />
+                )}
+                <View style={styles.medicationInfo}>
+                  <View style={styles.medicationHeader}>
+                    <Text style={styles.medicationName}>{med.name}</Text>
+                    <View style={styles.actionButtons}>
+                      <TouchableOpacity
+                        style={styles.actionButton}
+                        onPress={() => openEditModal(med)}
+                      >
+                        <Text style={styles.editIcon}>✏️</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={styles.actionButton}
+                        onPress={() => toggleLike(med.id)}
+                      >
+                        <Text style={styles.likeIcon}>
+                          {med.isLiked ? '❤️' : '🤍'}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                  <Text style={styles.medicationDetail}>Dose: {med.dose}</Text>
+                  <Text style={styles.medicationDetail}>
+                    Times: {med.scheduledTimes.join(', ')}
+                  </Text>
+                  <Text style={styles.medicationDetail}>Duration: {med.duration} days</Text>
+                </View>
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
+      </ScrollView>
+
+      {/* Floating Add Button */}
+      <TouchableOpacity
+        style={styles.floatingAddButton}
+        onPress={() => setShowAddModal(true)}
+      >
+        <Text style={styles.addButtonText}>+</Text>
+      </TouchableOpacity>
+
+      {/* Add Medication Modal */}
+      <Modal
+        visible={showAddModal}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setShowAddModal(false)}
+      >
+        <ScrollView style={styles.modalContainer}>
+          <View style={styles.modalHeader}>
+            <TouchableOpacity onPress={() => setShowAddModal(false)}>
+              <Text style={styles.modalCloseButton}>✕</Text>
+            </TouchableOpacity>
+            <Text style={styles.modalTitle}>Add New Medication</Text>
+            <View style={styles.placeholder} />
+          </View>
+
+          <View style={styles.form}>
+            <Text style={styles.label}>Medicine Image</Text>
+            <TouchableOpacity style={styles.imageButton} onPress={pickImage}>
+              {formData.imageUri ? (
+                <Image source={{ uri: formData.imageUri }} style={styles.medicineImage} />
+              ) : (
+                <View style={styles.imagePlaceholder}>
+                  <Text style={styles.imagePlaceholderText}>📷 Add Photo</Text>
+                  <Text style={styles.imagePlaceholderSubtext}>Tap to take photo or select from gallery</Text>
+                </View>
               )}
-              <View style={styles.medicationInfo}>
-                <Text style={styles.medicationName}>{med.name}</Text>
-                <Text style={styles.medicationDetail}>Dose: {med.dose}</Text>
-                <Text style={styles.medicationDetail}>
-                  Times: {med.scheduledTimes.join(', ')}
-                </Text>
-                <Text style={styles.medicationDetail}>Duration: {med.duration} days</Text>
-                <TouchableOpacity
-                  style={styles.deleteButton}
-                  onPress={() => deleteMedication(med.id)}
-                >
-                  <Text style={styles.deleteText}>Delete</Text>
-                </TouchableOpacity>
+            </TouchableOpacity>
+
+            <Text style={styles.label}>Medicine Name</Text>
+            <TextInput
+              style={styles.input}
+              value={formData.name}
+              onChangeText={(text) => setFormData({ ...formData, name: text })}
+              placeholder="Enter medicine name"
+            />
+
+            <Text style={styles.label}>Dose Amount</Text>
+            <TextInput
+              style={styles.input}
+              value={formData.dose}
+              onChangeText={(text) => setFormData({ ...formData, dose: text })}
+              placeholder="e.g., 1 tablet, 2 spoons"
+            />
+
+            <Text style={styles.label}>Duration (days)</Text>
+            <TextInput
+              style={styles.input}
+              value={formData.duration.toString()}
+              onChangeText={(text) => setFormData({ ...formData, duration: parseInt(text) || 7 })}
+              placeholder="Number of days"
+              keyboardType="numeric"
+            />
+
+            <Text style={styles.label}>Scheduled Times</Text>
+            {formData.times.map((time, index) => (
+              <TextInput
+                key={index}
+                style={styles.input}
+                value={time}
+                onChangeText={(text) => {
+                  const newTimes = [...formData.times];
+                  newTimes[index] = text;
+                  setFormData({ ...formData, times: newTimes });
+                }}
+                placeholder="12:00 PM"
+              />
+            ))}
+
+            <TouchableOpacity
+              style={styles.addTimeButton}
+              onPress={() => {
+                setFormData({
+                  ...formData,
+                  timesPerDay: formData.timesPerDay + 1,
+                  times: [...formData.times, '12:00 PM'],
+                });
+              }}
+            >
+              <Text style={styles.addTimeText}>+ Add Another Time</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.submitButton} onPress={addMedication}>
+              <Text style={styles.submitText}>Add Medication</Text>
+            </TouchableOpacity>
+          </View>
+        </ScrollView>
+      </Modal>
+
+      {/* Edit Medication Modal */}
+      <Modal
+        visible={showEditModal}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setShowEditModal(false)}
+      >
+        {editingMedication && (
+          <ScrollView style={styles.modalContainer}>
+            <View style={styles.modalHeader}>
+              <TouchableOpacity onPress={() => setShowEditModal(false)}>
+                <Text style={styles.modalCloseButton}>✕</Text>
+              </TouchableOpacity>
+              <Text style={styles.modalTitle}>Edit Medication</Text>
+              <TouchableOpacity onPress={() => deleteMedication(editingMedication.id)}>
+                <Text style={styles.deleteButton}>🗑️</Text>
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.form}>
+              <Text style={styles.label}>Medicine Name</Text>
+              <TextInput
+                style={styles.input}
+                value={editingMedication.name}
+                onChangeText={(text) => setEditingMedication({ ...editingMedication, name: text })}
+                placeholder="Enter medicine name"
+              />
+
+              <Text style={styles.label}>Dose Amount</Text>
+              <TextInput
+                style={styles.input}
+                value={editingMedication.dose}
+                onChangeText={(text) => setEditingMedication({ ...editingMedication, dose: text })}
+                placeholder="e.g., 1 tablet, 2 spoons"
+              />
+
+              <Text style={styles.label}>Duration (days)</Text>
+              <TextInput
+                style={styles.input}
+                value={editingMedication.duration.toString()}
+                onChangeText={(text) => setEditingMedication({ ...editingMedication, duration: parseInt(text) || 7 })}
+                placeholder="Number of days"
+                keyboardType="numeric"
+              />
+
+              <Text style={styles.label}>Scheduled Times</Text>
+              {editingMedication.scheduledTimes.map((time, index) => (
+                <TextInput
+                  key={index}
+                  style={styles.input}
+                  value={time}
+                  onChangeText={(text) => {
+                    const newTimes = [...editingMedication.scheduledTimes];
+                    newTimes[index] = text;
+                    setEditingMedication({ ...editingMedication, scheduledTimes: newTimes });
+                  }}
+                  placeholder="12:00 PM"
+                />
+              ))}
+
+              <TouchableOpacity style={styles.submitButton} onPress={updateMedication}>
+                <Text style={styles.submitText}>Update Medication</Text>
+              </TouchableOpacity>
+            </View>
+          </ScrollView>
+        )}
+      </Modal>
+
+      {/* Medication Detail Modal */}
+      <Modal
+        visible={showDetailModal}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setShowDetailModal(false)}
+      >
+        {selectedMedication && (
+          <ScrollView style={styles.modalContainer}>
+            <View style={styles.modalHeader}>
+              <TouchableOpacity onPress={() => setShowDetailModal(false)}>
+                <Text style={styles.modalCloseButton}>✕</Text>
+              </TouchableOpacity>
+              <Text style={styles.modalTitle}>Medication Details</Text>
+              <View style={styles.placeholder} />
+            </View>
+
+            <View style={styles.detailContainer}>
+              {selectedMedication.imageUri && (
+                <Image source={{ uri: selectedMedication.imageUri }} style={styles.detailImage} />
+              )}
+              
+              <View style={styles.detailInfo}>
+                <Text style={styles.detailName}>{selectedMedication.name}</Text>
+                <Text style={styles.detailText}>💊 Dose: {selectedMedication.dose}</Text>
+                <Text style={styles.detailText}>⏰ Times: {selectedMedication.scheduledTimes.join(', ')}</Text>
+                <Text style={styles.detailText}>📅 Duration: {selectedMedication.duration} days</Text>
+                <Text style={styles.detailText}>🗓️ Started: {new Date(selectedMedication.startDate).toLocaleDateString()}</Text>
+                <Text style={styles.detailText}>📈 Times per day: {selectedMedication.timesPerDay}</Text>
+                
+                <View style={styles.statusContainer}>
+                  <Text style={styles.statusText}>
+                    Status: {new Date() > new Date(new Date(selectedMedication.startDate).getTime() + selectedMedication.duration * 24 * 60 * 60 * 1000) ? '✅ Completed' : '🔄 Active'}
+                  </Text>
+                </View>
               </View>
             </View>
-          ))}
-        </View>
-      )}
-    </ScrollView>
+          </ScrollView>
+        )}
+      </Modal>
+    </View>
   );
 }
 
@@ -519,10 +883,14 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#f5f5f5',
+  },
+  scrollView: {
+    flex: 1,
     padding: 20,
+    paddingBottom: 100,
   },
   title: {
-    fontSize: 24,
+    fontSize: 28,
     fontWeight: 'bold',
     textAlign: 'center',
     marginBottom: 30,
@@ -548,47 +916,222 @@ const styles = StyleSheet.create({
   },
   medicationsSection: {
     marginTop: 20,
+    paddingBottom: 100,
   },
   medicationCard: {
     backgroundColor: 'white',
-    borderRadius: 10,
+    borderRadius: 15,
+    marginBottom: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 5,
+    overflow: 'hidden',
+  },
+  medicationImage: {
+    width: '100%',
+    height: 200,
+    resizeMode: 'cover',
+  },
+  medicationInfo: {
+    padding: 20,
+  },
+  medicationHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  medicationName: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#333',
+    flex: 1,
+  },
+  actionButtons: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  actionButton: {
+    padding: 8,
+    borderRadius: 20,
+    backgroundColor: '#f0f0f0',
+  },
+  editIcon: {
+    fontSize: 16,
+  },
+  likeIcon: {
+    fontSize: 16,
+  },
+  medicationDetail: {
+    fontSize: 16,
+    color: '#666',
+    marginBottom: 5,
+  },
+  floatingAddButton: {
+    position: 'absolute',
+    bottom: 100,
+    right: 30,
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: '#007AFF',
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 8,
+  },
+  addButtonText: {
+    fontSize: 30,
+    color: 'white',
+    fontWeight: 'bold',
+  },
+  modalContainer: {
+    flex: 1,
+    backgroundColor: '#f5f5f5',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 20,
+    backgroundColor: 'white',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0',
+  },
+  modalCloseButton: {
+    fontSize: 24,
+    color: '#666',
+    fontWeight: 'bold',
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  deleteButton: {
+    fontSize: 24,
+  },
+  placeholder: {
+    width: 24,
+  },
+  form: {
+    padding: 20,
+  },
+  label: {
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 8,
+    color: '#333',
+  },
+  input: {
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 8,
+    padding: 12,
     marginBottom: 15,
+    fontSize: 16,
+    backgroundColor: 'white',
+  },
+  imageButton: {
+    marginBottom: 15,
+  },
+  medicineImage: {
+    width: '100%',
+    height: 200,
+    borderRadius: 8,
+    resizeMode: 'cover',
+  },
+  imagePlaceholder: {
+    width: '100%',
+    height: 200,
+    borderWidth: 2,
+    borderColor: '#ddd',
+    borderStyle: 'dashed',
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#f9f9f9',
+  },
+  imagePlaceholderText: {
+    fontSize: 24,
+    marginBottom: 5,
+  },
+  imagePlaceholderSubtext: {
+    fontSize: 14,
+    color: '#666',
+    textAlign: 'center',
+  },
+  addTimeButton: {
+    backgroundColor: '#007AFF',
+    padding: 10,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginBottom: 15,
+  },
+  addTimeText: {
+    color: 'white',
+    fontSize: 16,
+  },
+  submitButton: {
+    backgroundColor: '#34C759',
+    padding: 15,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  submitText: {
+    color: 'white',
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  detailContainer: {
+    padding: 20,
+  },
+  detailImage: {
+    width: '100%',
+    height: 250,
+    borderRadius: 15,
+    resizeMode: 'cover',
+    marginBottom: 20,
+  },
+  detailInfo: {
+    backgroundColor: 'white',
+    padding: 20,
+    borderRadius: 15,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
     shadowRadius: 4,
     elevation: 3,
-    overflow: 'hidden',
   },
-  medicationImage: {
-    width: '100%',
-    height: 150,
-    resizeMode: 'cover',
-  },
-  medicationInfo: {
-    padding: 15,
-  },
-  medicationName: {
-    fontSize: 18,
+  detailName: {
+    fontSize: 24,
     fontWeight: 'bold',
     color: '#333',
-    marginBottom: 5,
+    marginBottom: 15,
+    textAlign: 'center',
   },
-  medicationDetail: {
-    fontSize: 14,
+  detailText: {
+    fontSize: 16,
     color: '#666',
-    marginBottom: 3,
+    marginBottom: 8,
+    lineHeight: 24,
   },
-  deleteButton: {
-    backgroundColor: '#FF3B30',
-    padding: 8,
-    borderRadius: 5,
-    alignItems: 'center',
-    marginTop: 10,
+  statusContainer: {
+    marginTop: 15,
+    padding: 15,
+    backgroundColor: '#f0f8ff',
+    borderRadius: 10,
+    borderLeftWidth: 4,
+    borderLeftColor: '#007AFF',
   },
-  deleteText: {
-    color: 'white',
-    fontSize: 14,
+  statusText: {
+    fontSize: 16,
     fontWeight: '600',
+    color: '#333',
   },
 });

@@ -51,56 +51,6 @@ export default function AddMedication() {
         shouldSetBadge: true,
       }),
     });
-
-    // Listen for notification dismissals (when user swipes away notification)
-    const dismissalListener = Notifications.addNotificationReceivedListener(notification => {
-      // Check if this is a medication reminder that might have alarm
-      if (notification.request.content.data?.shouldPlayAlarm || notification.request.content.data?.type === 'medication_reminder') {
-        console.log('Medication notification received in add-medication, setting up dismissal detection');
-
-        // Set up multiple checks to detect if notification was dismissed
-        const checkDismissal = () => {
-          Notifications.getPresentedNotificationsAsync().then(presentedNotifications => {
-            const isStillPresented = presentedNotifications.some(
-              presented => presented.request.identifier === notification.request.identifier
-            );
-
-            if (!isStillPresented) {
-              console.log('Notification dismissed by swipe - stopping alarm from add-medication');
-              stopSpecificNotificationAlarm(notification.request.identifier);
-
-              // Set stop flags immediately
-              AsyncStorage.multiSet([
-                ['stopAlarmFlag', 'true'],
-                ['forceStopAlarm', 'true'],
-                ['alarmStopped', 'true']
-              ]).catch(() => {});
-
-              return true; // Dismissed
-            }
-            return false; // Still present
-          }).catch(() => {});
-        };
-
-        // Check multiple times for better detection
-        const timers = [
-          setTimeout(checkDismissal, 1000),  // Check after 1 second
-          setTimeout(checkDismissal, 2000),  // Check after 2 seconds
-          setTimeout(checkDismissal, 3000),  // Check after 3 seconds
-          setTimeout(checkDismissal, 5000),  // Check after 5 seconds
-        ];
-
-        // Clear all timers after 10 seconds to avoid memory leaks
-        setTimeout(() => {
-          timers.forEach(timer => clearTimeout(timer));
-        }, 10000);
-      }
-    });
-
-    // Cleanup listener on unmount
-    return () => {
-      dismissalListener.remove();
-    };
   }, []);
 
   const requestNotificationPermissions = async () => {
@@ -572,150 +522,11 @@ export default function AddMedication() {
     }
   };
 
-  const [alarmSound, setAlarmSound] = useState<Audio.Sound | null>(null);
-
-  // Global reference for alarm sound management
-  const globalAlarmSound = React.useRef<Audio.Sound | null>(null);
-
-  // Keep track of all active sound instances
-  const activeSounds = React.useRef<Set<Audio.Sound>>(new Set());
-
-  // Store notification-specific alarm sounds
-  const notificationAlarms = React.useRef<Map<string, Audio.Sound>>(new Map());
-
-  const playNotificationAlarm = async (notificationId: string) => {
-    try {
-      // Stop any existing alarm for this specific notification first
-      stopSpecificNotificationAlarm(notificationId);
-
-      const { sound } = await Audio.Sound.createAsync(
-        { uri: 'https://www.soundjay.com/misc/sounds/bell-ringing-05.wav' },
-        { shouldPlay: true, isLooping: true, volume: 1.0 }
-      );
-
-      // Track this sound instance by notification ID
-      notificationAlarms.current.set(notificationId, sound);
-      activeSounds.current.add(sound);
-      setAlarmSound(sound);
-
-      console.log(`Started alarm for notification: ${notificationId} (from add-medication)`);
-
-      // Auto-stop after 60 seconds for this specific alarm
-      setTimeout(() => {
-        stopSpecificNotificationAlarm(notificationId);
-      }, 60000);
-    } catch (error) {
-      console.log('Error playing alarm sound:', error);
-    }
-  };
-
-  const playAlarmSound = async () => {
-    // Default alarm (for backwards compatibility)
-    await playNotificationAlarm('test_alarm');
-  };
-
-  const stopSpecificNotificationAlarm = (notificationId: string) => {
-    // Stop and unload a specific notification's alarm
-    const sound = notificationAlarms.current.get(notificationId);
-    if (sound) {
-      try {
-        sound.stopAsync().then(() => {
-          sound.unloadAsync().then(() => {
-            notificationAlarms.current.delete(notificationId);
-            activeSounds.current.delete(sound);
-            console.log(`Stopped alarm for notification: ${notificationId}`);
-          }).catch(e => console.log("unload err", e));
-        }).catch(e => console.log("stop err", e));
-      } catch (error) {
-        console.log(`Error stopping alarm for notification ${notificationId}:`, error);
-      }
-    }
-  };
-
-  const stopAllGlobalAlarms = () => {
-    // IMMEDIATE stop - no async operations to prevent delays
-    try {
-      // Set multiple stop flags immediately
-      AsyncStorage.multiSet([
-        ['stopAlarmFlag', 'true'],
-        ['forceStopAlarm', 'true'], 
-        ['alarmStopped', 'true']
-      ]).catch(() => {});
-
-      // Stop all tracked sound instances immediately
-      activeSounds.current.forEach(sound => {
-        try {
-          // Immediate stop without checking status to avoid delays
-          sound.stopAsync().catch(() => {});
-          sound.unloadAsync().catch(() => {});
-        } catch (e) {
-          // Ignore errors for immediate response
-        }
-      });
-      activeSounds.current.clear();
-
-      // Stop current component alarm immediately
-      if (alarmSound) {
-        try {
-          alarmSound.stopAsync().catch(() => {});
-          alarmSound.unloadAsync().catch(() => {});
-        } catch (e) {
-          // Ignore errors for immediate response  
-        }
-        setAlarmSound(null);
-      }
-
-      // Stop global alarm reference immediately
-      if (globalAlarmSound.current) {
-        try {
-          globalAlarmSound.current.stopAsync().catch(() => {});
-          globalAlarmSound.current.unloadAsync().catch(() => {});
-        } catch (e) {
-          // Ignore errors for immediate response
-        }
-        globalAlarmSound.current = null;
-      }
-
-      console.log('All alarms stopped immediately from add-medication');
-    } catch (error) {
-      console.log('Error stopping all alarms:', error);
-    }
-  };
-
-  const stopAlarmSoundImmediate = () => {
-    // Immediate synchronous stop without await to prevent delays
-    stopAllGlobalAlarms();
-  };
-
-  const stopAlarmSound = async () => {
-    try {
-      // Stop the current state alarm
-      if (alarmSound) {
-        const status = await alarmSound.getStatusAsync();
-        if (status.isLoaded) {
-          await alarmSound.stopAsync();
-          await alarmSound.unloadAsync();
-        }
-        setAlarmSound(null);
-      }
-
-      // Stop the global reference alarm
-      if (globalAlarmSound.current) {
-        const status = await globalAlarmSound.current.getStatusAsync();
-        if (status.isLoaded) {
-          await globalAlarmSound.current.stopAsync();
-          await globalAlarmSound.current.unloadAsync();
-        }
-        globalAlarmSound.current = null;
-      }
-    } catch (error) {
-      console.log('Error stopping alarm sound:', error);
-    }
-  };
+  
 
   const testNotification = async () => {
     const notificationId = 'test_notification_' + Date.now();
-    // Show notification with action buttons first
+    // Show notification with action buttons - alarm will be handled by index.tsx
     await Notifications.scheduleNotificationAsync({
       identifier: notificationId,
       content: {
@@ -740,16 +551,6 @@ export default function AddMedication() {
         seconds: 1,
       },
     });
-
-    // Start alarm sound after a short delay to sync with notification
-    setTimeout(async () => {
-      await playNotificationAlarm(notificationId);
-    }, 1000);
-
-    // Auto-stop after 30 seconds if not manually stopped
-    setTimeout(() => {
-      stopSpecificNotificationAlarm(notificationId);
-    }, 30000);
   };
 
   const addMedication = async () => {
@@ -851,7 +652,14 @@ export default function AddMedication() {
           <Text style={styles.testButtonText}>🔔 Test Medication Alarm</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.stopAlarmButton} onPress={stopAlarmSoundImmediate}>
+        <TouchableOpacity style={styles.stopAlarmButton} onPress={() => {
+          // Set global stop flag for immediate response
+          AsyncStorage.multiSet([
+            ['stopAlarmFlag', 'true'],
+            ['forceStopAlarm', 'true'],
+            ['alarmStopped', 'true']
+          ]).catch(() => {});
+        }}>
           <Text style={styles.stopAlarmButtonText}>🛑 Stop Test Alarm</Text>
         </TouchableOpacity>
 

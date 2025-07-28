@@ -181,6 +181,15 @@ export default function Home() {
 
   const playNotificationAlarm = async (notificationId: string) => {
     try {
+      // Check for stop flags before starting alarm
+      const stopFlags = await AsyncStorage.multiGet(['stopAlarmFlag', 'forceStopAlarm', 'alarmStopped']);
+      const shouldStop = stopFlags.some(([key, value]) => value === 'true');
+      
+      if (shouldStop) {
+        console.log(`Alarm blocked for notification ${notificationId} due to stop flag`);
+        return;
+      }
+
       // Stop any existing alarm for this specific notification first
       stopSpecificNotificationAlarm(notificationId);
       
@@ -196,8 +205,26 @@ export default function Home() {
       
       console.log(`Started alarm for notification: ${notificationId}`);
 
-      // Auto-stop after 60 seconds for this specific alarm
+      // Check for stop flags periodically and auto-stop after 60 seconds
+      const checkStopFlags = async () => {
+        const flags = await AsyncStorage.multiGet(['stopAlarmFlag', 'forceStopAlarm', 'alarmStopped']);
+        if (flags.some(([key, value]) => value === 'true')) {
+          stopSpecificNotificationAlarm(notificationId);
+          return true;
+        }
+        return false;
+      };
+
+      // Check every 500ms for stop flags
+      const intervalId = setInterval(async () => {
+        if (await checkStopFlags()) {
+          clearInterval(intervalId);
+        }
+      }, 500);
+
+      // Auto-stop after 60 seconds
       setTimeout(() => {
+        clearInterval(intervalId);
         stopSpecificNotificationAlarm(notificationId);
       }, 60000);
     } catch (error) {
@@ -212,6 +239,9 @@ export default function Home() {
 
   const stopSpecificNotificationAlarm = (notificationId: string) => {
     try {
+      // Clear stop flags
+      AsyncStorage.multiRemove(['stopAlarmFlag', 'forceStopAlarm', 'alarmStopped']).catch(() => {});
+      
       const sound = notificationAlarms.current.get(notificationId);
       if (sound) {
         // Stop and unload this specific sound

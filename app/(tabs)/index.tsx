@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
@@ -50,10 +51,10 @@ export default function HomeScreen() {
   const [isDarkMode, setIsDarkMode] = useState(false);
   const scrollViewRef = useRef<ScrollView>(null);
 
-  // Active alarms tracking
+  // Active alarms tracking (original functionality)
   const [activeAlarms, setActiveAlarms] = useState<{[key: string]: any}>({});
 
-  // Add medication form state
+  // Add medication form state (original functionality)
   const [newMedication, setNewMedication] = useState({
     name: '',
     dosage: '',
@@ -62,6 +63,7 @@ export default function HomeScreen() {
     image: '',
   });
 
+  // Original focus effect to load data
   useFocusEffect(
     React.useCallback(() => {
       loadMedications();
@@ -70,6 +72,7 @@ export default function HomeScreen() {
     }, [])
   );
 
+  // Dark mode functionality (new)
   const loadDarkModePreference = async () => {
     try {
       const savedTheme = await AsyncStorage.getItem('isDarkMode');
@@ -91,6 +94,7 @@ export default function HomeScreen() {
     }
   };
 
+  // Original notification response handler
   const checkForNotificationResponse = async () => {
     const lastNotificationResponse = await Notifications.getLastNotificationResponseAsync();
     if (lastNotificationResponse) {
@@ -100,12 +104,13 @@ export default function HomeScreen() {
     }
   };
 
+  // Original load medications function with enhancement for times array
   const loadMedications = async () => {
     try {
       const medicationsData = await AsyncStorage.getItem('medications');
       if (medicationsData) {
         const parsedMedications = JSON.parse(medicationsData);
-        // Ensure all medications have times array
+        // Ensure all medications have times array (enhancement)
         const medicationsWithTimes = parsedMedications.map((med: Medication) => ({
           ...med,
           times: med.times || [],
@@ -118,6 +123,7 @@ export default function HomeScreen() {
     }
   };
 
+  // Original alarm stopping functionality
   const stopSpecificAlarm = async (notificationId: string) => {
     try {
       if (activeAlarms[notificationId]) {
@@ -138,6 +144,7 @@ export default function HomeScreen() {
     }
   };
 
+  // Original like toggle functionality
   const toggleLike = async (medicationId: string) => {
     const updatedMedications = medications.map(med =>
       med.id === medicationId ? { ...med, isLiked: !med.isLiked } : med
@@ -146,6 +153,7 @@ export default function HomeScreen() {
     await AsyncStorage.setItem('medications', JSON.stringify(updatedMedications));
   };
 
+  // Edit functionality (new enhancement)
   const startEdit = (medication: Medication) => {
     setEditingMedication({ ...medication });
   };
@@ -190,6 +198,7 @@ export default function HomeScreen() {
     }
   };
 
+  // Original delete functionality
   const deleteMedication = async (medicationId: string) => {
     Alert.alert(
       'Delete Medication',
@@ -209,7 +218,7 @@ export default function HomeScreen() {
     );
   };
 
-  // Add medication functions
+  // Original add medication time management functions
   const addTime = () => {
     setNewMedication({
       ...newMedication,
@@ -234,6 +243,7 @@ export default function HomeScreen() {
     });
   };
 
+  // Original image selection functionality
   const selectImage = async () => {
     const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permissionResult.granted) {
@@ -256,6 +266,7 @@ export default function HomeScreen() {
     }
   };
 
+  // Original add medication function with enhancements
   const addMedication = async () => {
     if (!newMedication.name || !newMedication.dosage || !newMedication.frequency || newMedication.times.length === 0) {
       Alert.alert('Error', 'Please fill in all fields and add at least one time.');
@@ -276,10 +287,10 @@ export default function HomeScreen() {
     setMedications(updatedMedications);
     await AsyncStorage.setItem('medications', JSON.stringify(updatedMedications));
 
-    // Schedule notifications for this medication
+    // Schedule notifications for this medication (original functionality)
     await scheduleNotificationsForMedication(medication);
 
-    // Reset form
+    // Reset form (original functionality)
     setNewMedication({
       name: '',
       dosage: '',
@@ -290,7 +301,7 @@ export default function HomeScreen() {
 
     setShowAddModal(false);
 
-    // Scroll to top to show the new medication
+    // Scroll to top to show the new medication (new enhancement)
     setTimeout(() => {
       scrollViewRef.current?.scrollTo({ y: 0, animated: true });
     }, 100);
@@ -298,6 +309,7 @@ export default function HomeScreen() {
     Alert.alert('Success', 'Medication added successfully!');
   };
 
+  // Original notification scheduling function
   const scheduleNotificationsForMedication = async (medication: Medication) => {
     try {
       for (const time of medication.times) {
@@ -324,10 +336,12 @@ export default function HomeScreen() {
     }
   };
 
+  // Original medication press handler
   const handleMedicationPress = (medication: Medication) => {
     setExpandedMedication(expandedMedication === medication.id ? null : medication.id);
   };
 
+  // Dynamic styling for dark mode (new enhancement)
   const containerStyle = {
     backgroundColor: isDarkMode ? '#1a1a1a' : '#f5f5f5',
   };
@@ -346,6 +360,7 @@ export default function HomeScreen() {
 
   return (
     <View style={[styles.container, containerStyle]}>
+      {/* New Navbar component */}
       <Navbar
         title="My Medications"
         onSearchPress={() => setShowSearchModal(true)}
@@ -396,14 +411,19 @@ export default function HomeScreen() {
                 </View>
               </View>
 
+              {/* Original expanded content functionality */}
               {expandedMedication === medication.id && (
                 <View style={styles.expandedContent}>
                   <Text style={[styles.timesTitle, textStyle]}>Scheduled Times:</Text>
-                  {medication.times.map((time, index) => (
+                  {medication.times && medication.times.length > 0 ? medication.times.map((time, index) => (
                     <Text key={index} style={[styles.timeText, subTextStyle]}>
                       • {time}
                     </Text>
-                  ))}
+                  )) : (
+                    <Text style={[styles.timeText, subTextStyle]}>
+                      • No times set
+                    </Text>
+                  )}
                   <TouchableOpacity
                     style={styles.deleteButton}
                     onPress={() => deleteMedication(medication.id)}
@@ -417,7 +437,7 @@ export default function HomeScreen() {
         )}
       </ScrollView>
 
-      {/* Floating Add Button */}
+      {/* Floating Add Button (modified from tab to modal) */}
       <TouchableOpacity
         style={styles.floatingAddButton}
         onPress={() => setShowAddModal(true)}
@@ -425,7 +445,7 @@ export default function HomeScreen() {
         <IconSymbol name="plus" size={24} color="#ffffff" />
       </TouchableOpacity>
 
-      {/* Add Medication Modal */}
+      {/* Add Medication Modal (new enhancement) */}
       <Modal
         visible={showAddModal}
         animationType="slide"
@@ -538,7 +558,7 @@ export default function HomeScreen() {
         </View>
       </Modal>
 
-      {/* Edit Medication Modal */}
+      {/* Edit Medication Modal (new enhancement) */}
       <Modal
         visible={editingMedication !== null}
         animationType="slide"
@@ -628,7 +648,7 @@ export default function HomeScreen() {
         </View>
       </Modal>
 
-      {/* Search Modal */}
+      {/* Search Modal (new enhancement) */}
       <SearchModal
         visible={showSearchModal}
         onClose={() => setShowSearchModal(false)}
@@ -637,7 +657,7 @@ export default function HomeScreen() {
         isDarkMode={isDarkMode}
       />
 
-      {/* Settings Modal */}
+      {/* Settings Modal (new enhancement) */}
       <SettingsModal
         visible={showSettingsModal}
         onClose={() => setShowSettingsModal(false)}
@@ -648,6 +668,7 @@ export default function HomeScreen() {
   );
 }
 
+// Original styles preserved with enhancements for new features
 const styles = StyleSheet.create({
   container: {
     flex: 1,

@@ -56,32 +56,46 @@ export default function AddMedication() {
     // Listen for notification dismissals (when user swipes away notification)
     const dismissalListener = Notifications.addNotificationReceivedListener(notification => {
       // Check if this is a medication reminder that might have alarm
-      if (notification.request.content.data?.shouldPlayAlarm) {
-        // Set up a timer to detect if notification was dismissed
-        const dismissCheckTimer = setTimeout(() => {
-          // If notification is no longer visible, it was likely dismissed
+      if (notification.request.content.data?.shouldPlayAlarm || notification.request.content.data?.type === 'medication_reminder') {
+        console.log('Medication notification received in add-medication, setting up dismissal detection');
+        
+        // Set up multiple checks to detect if notification was dismissed
+        const checkDismissal = () => {
           Notifications.getPresentedNotificationsAsync().then(presentedNotifications => {
             const isStillPresented = presentedNotifications.some(
               presented => presented.request.identifier === notification.request.identifier
             );
             
             if (!isStillPresented) {
-              console.log('Notification dismissed - stopping alarm from add-medication');
+              console.log('Notification dismissed by swipe - stopping alarm from add-medication');
               stopAlarmSoundImmediate();
               stopAllGlobalAlarms();
               
-              // Set stop flags
+              // Set stop flags immediately
               AsyncStorage.multiSet([
                 ['stopAlarmFlag', 'true'],
                 ['forceStopAlarm', 'true'],
                 ['alarmStopped', 'true']
               ]).catch(() => {});
+              
+              return true; // Dismissed
             }
+            return false; // Still present
           }).catch(() => {});
-        }, 2000); // Check after 2 seconds
+        };
         
-        // Clear timer after 10 seconds to avoid memory leaks
-        setTimeout(() => clearTimeout(dismissCheckTimer), 10000);
+        // Check multiple times for better detection
+        const timers = [
+          setTimeout(checkDismissal, 1000),  // Check after 1 second
+          setTimeout(checkDismissal, 2000),  // Check after 2 seconds
+          setTimeout(checkDismissal, 3000),  // Check after 3 seconds
+          setTimeout(checkDismissal, 5000),  // Check after 5 seconds
+        ];
+        
+        // Clear all timers after 10 seconds to avoid memory leaks
+        setTimeout(() => {
+          timers.forEach(timer => clearTimeout(timer));
+        }, 10000);
       }
     });
 

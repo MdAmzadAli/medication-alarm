@@ -522,7 +522,7 @@ export default function AddMedication() {
     }
   };
 
-  
+
 
   const testNotification = async () => {
     const notificationId = 'test_notification_' + Date.now();
@@ -658,7 +658,7 @@ export default function AddMedication() {
           // This will be handled by the global alarm stop function in index.tsx
           // No AsyncStorage flags needed - direct sound stopping
         }}>
-          <Text style={styles.stopAlarmButtonText">🛑 Stop Test Alarm</Text>
+          <Text style={styles.stopAlarmButtonText}>🛑 Stop Test Alarm</Text>
         </TouchableOpacity>
 
         <TouchableOpacity style={styles.submitButton} onPress={addMedication}>

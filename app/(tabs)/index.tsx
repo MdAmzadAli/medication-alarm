@@ -104,7 +104,14 @@ export default function HomeScreen() {
     try {
       const medicationsData = await AsyncStorage.getItem('medications');
       if (medicationsData) {
-        setMedications(JSON.parse(medicationsData));
+        const parsedMedications = JSON.parse(medicationsData);
+        // Ensure all medications have times array
+        const medicationsWithTimes = parsedMedications.map((med: Medication) => ({
+          ...med,
+          times: med.times || [],
+          isLiked: med.isLiked !== undefined ? med.isLiked : false
+        }));
+        setMedications(medicationsWithTimes);
       }
     } catch (error) {
       console.error('Error loading medications:', error);
@@ -260,7 +267,7 @@ export default function HomeScreen() {
       name: newMedication.name,
       dosage: newMedication.dosage,
       frequency: newMedication.frequency,
-      times: newMedication.times.filter(time => time.trim() !== ''),
+      times: newMedication.times.filter(time => time.trim() !== '') || [],
       image: newMedication.image,
       isLiked: false,
     };

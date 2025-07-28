@@ -46,7 +46,10 @@ export function SearchModal({
       const filtered = medications.filter(medication =>
         medication.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
         medication.dosage.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        medication.frequency.toLowerCase().includes(searchQuery.toLowerCase())
+        medication.frequency.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (medication.times && medication.times.some(time => 
+          time.toLowerCase().includes(searchQuery.toLowerCase())
+        ))
       );
       setFilteredMedications(filtered);
     }
@@ -117,7 +120,7 @@ export function SearchModal({
                     {medication.dosage} • {medication.frequency}
                   </Text>
                   <Text style={[styles.medicationDetail, { color: isDarkMode ? '#ccc' : '#666' }]}>
-                    Times: {medication.times.join(', ')}
+                    Times: {medication.times ? medication.times.join(', ') : 'Not set'}
                   </Text>
                 </View>
               </TouchableOpacity>

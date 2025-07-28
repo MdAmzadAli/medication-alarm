@@ -53,6 +53,38 @@ export default function Home() {
       }
     });
 
+    // Listen for notification dismissals (when user swipes away notification)
+    const dismissalListener = Notifications.addNotificationReceivedListener(notification => {
+      // Check if this is a medication reminder that might have alarm
+      if (notification.request.content.data?.shouldPlayAlarm) {
+        // Set up a timer to detect if notification was dismissed
+        const dismissCheckTimer = setTimeout(() => {
+          // If notification is no longer visible, it was likely dismissed
+          Notifications.getPresentedNotificationsAsync().then(presentedNotifications => {
+            const isStillPresented = presentedNotifications.some(
+              presented => presented.request.identifier === notification.request.identifier
+            );
+            
+            if (!isStillPresented) {
+              console.log('Notification dismissed - stopping alarm');
+              stopAlarmSoundImmediate();
+              stopAllGlobalAlarms();
+              
+              // Set stop flags
+              AsyncStorage.multiSet([
+                ['stopAlarmFlag', 'true'],
+                ['forceStopAlarm', 'true'],
+                ['alarmStopped', 'true']
+              ]).catch(() => {});
+            }
+          }).catch(() => {});
+        }, 2000); // Check after 2 seconds
+        
+        // Clear timer after 10 seconds to avoid memory leaks
+        setTimeout(() => clearTimeout(dismissCheckTimer), 10000);
+      }
+    });
+
     // Listen for notification interactions
     const responseListener = Notifications.addNotificationResponseReceivedListener(async (response) => {
       const { actionIdentifier, notification } = response;
@@ -153,6 +185,7 @@ export default function Home() {
     return () => {
       notificationListener.remove();
       responseListener.remove();
+      dismissalListener.remove();
     };
   }, []);
 
@@ -173,7 +206,7 @@ export default function Home() {
       
       // Store global reference in AsyncStorage for cross-component access
       AsyncStorage.setItem('stopAlarmFlag', 'false').catch(() => {});
-      AsyncStorage.setItem('activeAlarmId', sound._key || 'unknown').catch(() => {});
+      AsyncStorage.setItem('activeAlarmId', String(sound._key || 'unknown')).catch(() => {});
 
       // Monitor for stop flag with immediate response
       const checkStopFlag = () => {

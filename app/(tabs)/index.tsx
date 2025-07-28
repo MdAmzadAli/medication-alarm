@@ -28,19 +28,11 @@ export default function Home() {
   const [medications, setMedications] = useState<Medication[]>([]);
   const [alarmSound, setAlarmSound] = useState<Audio.Sound | null>(null);
 
-  // Global reference for alarm sound management - shared across app
-  const globalAlarmSound = React.useRef<Audio.Sound | null>(null);
+  // Keep track of individual alarm sounds by notification ID
+  const notificationAlarms = React.useRef<Map<string, Audio.Sound>>(new Map());
   
   // Keep track of all active sound instances
   const activeSounds = React.useRef<Set<Audio.Sound>>(new Set());
-  
-  // Make alarm sound management globally accessible
-  const setGlobalAlarmSound = (sound: Audio.Sound | null) => {
-    globalAlarmSound.current = sound;
-    if (sound) {
-      activeSounds.current.add(sound);
-    }
-  };
 
   useEffect(() => {
     loadMedications();
@@ -49,7 +41,8 @@ export default function Home() {
     // Listen for notifications when app is in foreground
     const notificationListener = Notifications.addNotificationReceivedListener(notification => {
       if (notification.request.content.data?.shouldPlayAlarm) {
-        playAlarmSound();
+        const notificationId = notification.request.identifier;
+        playNotificationAlarm(notificationId);
       }
     });
 
@@ -57,27 +50,19 @@ export default function Home() {
     const dismissalListener = Notifications.addNotificationReceivedListener(notification => {
       // Check if this is a medication reminder that might have alarm
       if (notification.request.content.data?.shouldPlayAlarm || notification.request.content.data?.type === 'medication_reminder') {
-        console.log('Medication notification received, setting up dismissal detection');
+        const notificationId = notification.request.identifier;
+        console.log(`Medication notification received: ${notificationId}, setting up dismissal detection`);
         
         // Set up multiple checks to detect if notification was dismissed
         const checkDismissal = () => {
           Notifications.getPresentedNotificationsAsync().then(presentedNotifications => {
             const isStillPresented = presentedNotifications.some(
-              presented => presented.request.identifier === notification.request.identifier
+              presented => presented.request.identifier === notificationId
             );
             
             if (!isStillPresented) {
-              console.log('Notification dismissed by swipe - stopping alarm immediately');
-              stopAlarmSoundImmediate();
-              stopAllGlobalAlarms();
-              
-              // Set stop flags immediately
-              AsyncStorage.multiSet([
-                ['stopAlarmFlag', 'true'],
-                ['forceStopAlarm', 'true'],
-                ['alarmStopped', 'true']
-              ]).catch(() => {});
-              
+              console.log(`Notification ${notificationId} dismissed by swipe - stopping ONLY this alarm`);
+              stopSpecificNotificationAlarm(notificationId);
               return true; // Dismissed
             }
             return false; // Still present
@@ -106,18 +91,10 @@ export default function Home() {
       
       if (notificationData?.type === 'medication_reminder') {
         if (actionIdentifier === 'STOP_ACTION') {
-          // IMMEDIATE STOP - no delays, no awaits
-          stopAlarmSoundImmediate();
-          stopAllGlobalAlarms();
-          
-          // Set multiple stop flags for all components
-          AsyncStorage.multiSet([
-            ['stopAlarmFlag', 'true'],
-            ['forceStopAlarm', 'true'],
-            ['alarmStopped', 'true']
-          ]).catch(() => {});
-          
-          console.log('STOP ACTION: All alarms stopped immediately');
+          // STOP only this specific notification's alarm
+          const notificationId = notification.request.identifier;
+          console.log(`STOP ACTION: Stopping alarm for notification ${notificationId}`);
+          stopSpecificNotificationAlarm(notificationId);
           // Stop alarm and dismiss notification completely
           await Notifications.dismissNotificationAsync(notification.request.identifier);
           
@@ -138,21 +115,19 @@ export default function Home() {
           );
           
         } else if (actionIdentifier === 'SNOOZE_ACTION') {
-          // IMMEDIATELY stop alarm first
-          stopAlarmSoundImmediate();
-          stopAllGlobalAlarms();
-          
-          // Set stop flags
-          AsyncStorage.setItem('stopAlarmFlag', 'true').catch(() => {});
+          // IMMEDIATELY stop this specific alarm
+          const notificationId = notification.request.identifier;
+          console.log(`SNOOZE ACTION: Stopping alarm for notification ${notificationId}`);
+          stopSpecificNotificationAlarm(notificationId);
           
           // Don't dismiss here - let scheduleSnoozeNotification handle it
-          const currentNotificationId = notification.request.identifier;
-          await scheduleSnoozeNotification(notificationData, currentNotificationId);
+          await scheduleSnoozeNotification(notificationData, notificationId);
           
         } else if (actionIdentifier === 'DISMISS_ACTION') {
-          // IMMEDIATELY stop alarm first
-          stopAlarmSoundImmediate();
-          stopAllGlobalAlarms();
+          // IMMEDIATELY stop this specific alarm
+          const notificationId = notification.request.identifier;
+          console.log(`DISMISS ACTION: Stopping alarm for notification ${notificationId}`);
+          stopSpecificNotificationAlarm(notificationId);
           // Dismiss snoozed notification permanently
           await Notifications.dismissNotificationAsync(notification.request.identifier);
           
@@ -173,9 +148,10 @@ export default function Home() {
           );
           
         } else {
-          // Default tap action - IMMEDIATELY stop alarm first
-          stopAlarmSoundImmediate();
-          stopAllGlobalAlarms();
+          // Default tap action - IMMEDIATELY stop this specific alarm
+          const notificationId = notification.request.identifier;
+          console.log(`TAP ACTION: Stopping alarm for notification ${notificationId}`);
+          stopSpecificNotificationAlarm(notificationId);
           
           if (notificationData.isSnoozeWaiting) {
             // If it's a waiting snooze notification, show info
@@ -203,54 +179,66 @@ export default function Home() {
     };
   }, []);
 
-  const playAlarmSound = async () => {
+  const playNotificationAlarm = async (notificationId: string) => {
     try {
-      // Stop any existing alarm first - immediate stop
-      stopAlarmSoundImmediate();
+      // Stop any existing alarm for this specific notification first
+      stopSpecificNotificationAlarm(notificationId);
       
       const { sound } = await Audio.Sound.createAsync(
         { uri: 'https://www.soundjay.com/misc/sounds/bell-ringing-05.wav' },
         { shouldPlay: true, isLooping: true, volume: 1.0 }
       );
       
-      // Track all sound instances
-      setAlarmSound(sound);
-      globalAlarmSound.current = sound;
+      // Track this sound instance by notification ID
+      notificationAlarms.current.set(notificationId, sound);
       activeSounds.current.add(sound);
+      setAlarmSound(sound);
       
-      // Store global reference in AsyncStorage for cross-component access
-      AsyncStorage.setItem('stopAlarmFlag', 'false').catch(() => {});
-      AsyncStorage.setItem('activeAlarmId', String(sound._key || 'unknown')).catch(() => {});
+      console.log(`Started alarm for notification: ${notificationId}`);
 
-      // Monitor for stop flag with immediate response
-      const checkStopFlag = () => {
-        AsyncStorage.getItem('stopAlarmFlag').then(flag => {
-          if (flag === 'true') {
-            stopAlarmSoundImmediate();
-            AsyncStorage.setItem('stopAlarmFlag', 'false').catch(() => {});
-          }
-        }).catch(() => {});
-      };
-      
-      // Check every 50ms for faster response
-      const stopFlagInterval = setInterval(checkStopFlag, 50);
-
-      // Auto-stop after 60 seconds
+      // Auto-stop after 60 seconds for this specific alarm
       setTimeout(() => {
-        clearInterval(stopFlagInterval);
-        stopAlarmSoundImmediate();
+        stopSpecificNotificationAlarm(notificationId);
       }, 60000);
     } catch (error) {
       console.log('Error playing alarm sound:', error);
     }
   };
 
+  const playAlarmSound = async () => {
+    // Default alarm (for backwards compatibility)
+    await playNotificationAlarm('default_alarm');
+  };
+
+  const stopSpecificNotificationAlarm = (notificationId: string) => {
+    try {
+      const sound = notificationAlarms.current.get(notificationId);
+      if (sound) {
+        // Stop and unload this specific sound
+        sound.stopAsync().catch(() => {});
+        sound.unloadAsync().catch(() => {});
+        
+        // Remove from tracking maps
+        notificationAlarms.current.delete(notificationId);
+        activeSounds.current.delete(sound);
+        
+        // If this was the current alarmSound, clear it
+        if (alarmSound === sound) {
+          setAlarmSound(null);
+        }
+        
+        console.log(`Stopped alarm for notification: ${notificationId}`);
+      } else {
+        console.log(`No alarm found for notification: ${notificationId}`);
+      }
+    } catch (error) {
+      console.log(`Error stopping alarm for notification ${notificationId}:`, error);
+    }
+  };
+
   const stopAllGlobalAlarms = () => {
     // IMMEDIATE stop - no async operations to prevent delays
     try {
-      // Set stop flag immediately
-      AsyncStorage.setItem('stopAlarmFlag', 'true').catch(() => {});
-      
       // Stop all tracked sound instances immediately
       activeSounds.current.forEach(sound => {
         try {
@@ -262,6 +250,7 @@ export default function Home() {
         }
       });
       activeSounds.current.clear();
+      notificationAlarms.current.clear();
       
       // Stop current component alarm immediately
       if (alarmSound) {
@@ -272,17 +261,6 @@ export default function Home() {
           // Ignore errors for immediate response  
         }
         setAlarmSound(null);
-      }
-      
-      // Stop global alarm reference immediately
-      if (globalAlarmSound.current) {
-        try {
-          globalAlarmSound.current.stopAsync().catch(() => {});
-          globalAlarmSound.current.unloadAsync().catch(() => {});
-        } catch (e) {
-          // Ignore errors for immediate response
-        }
-        globalAlarmSound.current = null;
       }
       
       console.log('All alarms stopped immediately');
@@ -425,7 +403,7 @@ export default function Home() {
             trigger: { seconds: 1 },
           });
           
-          await playAlarmSound();
+          await playNotificationAlarm(currentNotificationId);
         } catch (error) {
           console.log('Error updating notification after snooze:', error);
         }

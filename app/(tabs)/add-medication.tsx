@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import {
   View,
@@ -42,7 +41,7 @@ export default function AddMedication() {
   React.useEffect(() => {
     requestNotificationPermissions();
     setupNotificationCategories();
-    
+
     // Configure notification handler for continuous alarm
     Notifications.setNotificationHandler({
       handleNotification: async () => ({
@@ -58,32 +57,31 @@ export default function AddMedication() {
       // Check if this is a medication reminder that might have alarm
       if (notification.request.content.data?.shouldPlayAlarm || notification.request.content.data?.type === 'medication_reminder') {
         console.log('Medication notification received in add-medication, setting up dismissal detection');
-        
+
         // Set up multiple checks to detect if notification was dismissed
         const checkDismissal = () => {
           Notifications.getPresentedNotificationsAsync().then(presentedNotifications => {
             const isStillPresented = presentedNotifications.some(
               presented => presented.request.identifier === notification.request.identifier
             );
-            
+
             if (!isStillPresented) {
               console.log('Notification dismissed by swipe - stopping alarm from add-medication');
-              stopAlarmSoundImmediate();
-              stopAllGlobalAlarms();
-              
+              stopSpecificNotificationAlarm(notification.request.identifier);
+
               // Set stop flags immediately
               AsyncStorage.multiSet([
                 ['stopAlarmFlag', 'true'],
                 ['forceStopAlarm', 'true'],
                 ['alarmStopped', 'true']
               ]).catch(() => {});
-              
+
               return true; // Dismissed
             }
             return false; // Still present
           }).catch(() => {});
         };
-        
+
         // Check multiple times for better detection
         const timers = [
           setTimeout(checkDismissal, 1000),  // Check after 1 second
@@ -91,7 +89,7 @@ export default function AddMedication() {
           setTimeout(checkDismissal, 3000),  // Check after 3 seconds
           setTimeout(checkDismissal, 5000),  // Check after 5 seconds
         ];
-        
+
         // Clear all timers after 10 seconds to avoid memory leaks
         setTimeout(() => {
           timers.forEach(timer => clearTimeout(timer));
@@ -149,7 +147,7 @@ export default function AddMedication() {
   // This function is exported to be used by the main notification handler in index.tsx
   const scheduleSnoozeNotification = async (originalData: any, currentNotificationId: string) => {
     const currentSnoozeCount = originalData.snoozeCount || 0;
-    
+
     // Check if maximum snoozes reached
     if (currentSnoozeCount >= 7) {
       Alert.alert(
@@ -162,11 +160,11 @@ export default function AddMedication() {
 
     const newSnoozeCount = currentSnoozeCount + 1;
     const snoozeId = originalData.snoozeId || `snooze_${originalData.medicationName}_${Date.now()}`;
-    
+
     try {
       // Clear any existing notifications with same identifier first
       await Notifications.dismissNotificationAsync(currentNotificationId);
-      
+
       // Create ONE snoozed notification
       await Notifications.scheduleNotificationAsync({
         identifier: currentNotificationId, // Reuse same ID
@@ -195,7 +193,7 @@ export default function AddMedication() {
       setTimeout(async () => {
         try {
           await Notifications.dismissNotificationAsync(currentNotificationId);
-          
+
           // Restore full notification with ALL original buttons
           await Notifications.scheduleNotificationAsync({
             identifier: currentNotificationId, // Same ID again
@@ -219,13 +217,13 @@ export default function AddMedication() {
             },
             trigger: { seconds: 1 },
           });
-          
-          await playAlarmSound();
+
+          await playNotificationAlarm(currentNotificationId);
         } catch (error) {
           console.log('Error updating notification after snooze:', error);
         }
       }, 2 * 60 * 1000);
-      
+
     } catch (error) {
       console.log('Error in snooze notification process:', error);
     }
@@ -317,21 +315,21 @@ export default function AddMedication() {
   const TimePickerComponent = ({ index }: { index: number }) => {
     const [showHourPicker, setShowHourPicker] = useState(false);
     const [showMinutePicker, setShowMinutePicker] = useState(false);
-    
+
     // Get current time from form data
     const currentTime = formData.times[index] || '12:00 AM';
-    
+
     // Parse current time to get individual components
     const parseTime = (timeString: string) => {
       if (!timeString) return { hour: 12, minute: 0, period: 'AM' };
-      
+
       const parts = timeString.split(' ');
       if (parts.length !== 2) return { hour: 12, minute: 0, period: 'AM' };
-      
+
       const [timePart, period] = parts;
       const timeParts = timePart.split(':');
       if (timeParts.length !== 2) return { hour: 12, minute: 0, period: 'AM' };
-      
+
       const [hourStr, minuteStr] = timeParts;
       return {
         hour: parseInt(hourStr) || 12,
@@ -339,7 +337,7 @@ export default function AddMedication() {
         period: period || 'AM'
       };
     };
-    
+
     const { hour: selectedHour, minute: selectedMinute, period: selectedPeriod } = parseTime(currentTime);
 
     const hours = Array.from({ length: 12 }, (_, i) => i + 1);
@@ -367,7 +365,7 @@ export default function AddMedication() {
     return (
       <View style={styles.newTimePickerContainer}>
         <Text style={styles.timePickerLabel}>Time {index + 1}</Text>
-        
+
         <View style={styles.timeDisplayContainer}>
           {/* Hour Display */}
           <TouchableOpacity 
@@ -521,7 +519,7 @@ export default function AddMedication() {
       for (const time of scheduledTimes) {
         const [timePart, period] = time.split(' ');
         const [hours, minutes] = timePart.split(':').map(Number);
-        
+
         // Convert to 24-hour format
         let hour24 = hours;
         if (period === 'PM' && hours !== 12) {
@@ -541,7 +539,10 @@ export default function AddMedication() {
 
         // Only schedule future notifications
         if (notificationDate > new Date()) {
+          const notificationId = `medication_${medication.id}_${day}_${time}`; // Create unique ID
+
           await Notifications.scheduleNotificationAsync({
+            identifier: notificationId,
             content: {
               title: isSnooze ? '⏰ MEDICATION SNOOZE REMINDER!' : '🚨 MEDICATION ALARM! 🚨',
               body: `💊 ${name}\n📋 Dose: ${dose}\n⏰ Time: ${time}${isSnooze ? ' (Snoozed)' : ''}\n📅 Day ${day + 1} of ${duration}`,
@@ -557,7 +558,8 @@ export default function AddMedication() {
                 duration: duration,
                 type: 'medication_reminder',
                 shouldPlayAlarm: true,
-                isSnooze: isSnooze
+                isSnooze: isSnooze,
+                notificationId: notificationId, // Include ID
               },
             },
             trigger: {
@@ -574,51 +576,59 @@ export default function AddMedication() {
 
   // Global reference for alarm sound management
   const globalAlarmSound = React.useRef<Audio.Sound | null>(null);
-  
+
   // Keep track of all active sound instances
   const activeSounds = React.useRef<Set<Audio.Sound>>(new Set());
 
-  const playAlarmSound = async () => {
+  // Store notification-specific alarm sounds
+  const notificationAlarms = React.useRef<Map<string, Audio.Sound>>(new Map());
+
+  const playNotificationAlarm = async (notificationId: string) => {
     try {
-      // Stop any existing alarm first - immediate stop
-      stopAlarmSoundImmediate();
-      
+      // Stop any existing alarm for this specific notification first
+      stopSpecificNotificationAlarm(notificationId);
+
       const { sound } = await Audio.Sound.createAsync(
         { uri: 'https://www.soundjay.com/misc/sounds/bell-ringing-05.wav' },
         { shouldPlay: true, isLooping: true, volume: 1.0 }
       );
-      
-      // Track all sound instances
-      setAlarmSound(sound);
-      globalAlarmSound.current = sound;
+
+      // Track this sound instance by notification ID
+      notificationAlarms.current.set(notificationId, sound);
       activeSounds.current.add(sound);
-      
-      // Monitor for multiple stop flags from other components
-      const checkStopFlag = () => {
-        AsyncStorage.multiGet(['stopAlarmFlag', 'forceStopAlarm', 'alarmStopped']).then(values => {
-          const [[,stopFlag], [,forceStop], [,alarmStopped]] = values;
-          if (stopFlag === 'true' || forceStop === 'true' || alarmStopped === 'true') {
-            stopAlarmSoundImmediate();
-            AsyncStorage.multiSet([
-              ['stopAlarmFlag', 'false'],
-              ['forceStopAlarm', 'false'],
-              ['alarmStopped', 'false']
-            ]).catch(() => {});
-          }
-        }).catch(() => {});
-      };
-      
-      // Check every 50ms for faster response
-      const stopFlagInterval = setInterval(checkStopFlag, 50);
-      
-      // Clear interval after 60 seconds
+      setAlarmSound(sound);
+
+      console.log(`Started alarm for notification: ${notificationId} (from add-medication)`);
+
+      // Auto-stop after 60 seconds for this specific alarm
       setTimeout(() => {
-        clearInterval(stopFlagInterval);
-        stopAlarmSoundImmediate();
+        stopSpecificNotificationAlarm(notificationId);
       }, 60000);
-      
     } catch (error) {
       console.log('Error playing alarm sound:', error);
+    }
+  };
+
+  const playAlarmSound = async () => {
+    // Default alarm (for backwards compatibility)
+    await playNotificationAlarm('test_alarm');
+  };
+
+  const stopSpecificNotificationAlarm = (notificationId: string) => {
+    // Stop and unload a specific notification's alarm
+    const sound = notificationAlarms.current.get(notificationId);
+    if (sound) {
+      try {
+        sound.stopAsync().then(() => {
+          sound.unloadAsync().then(() => {
+            notificationAlarms.current.delete(notificationId);
+            activeSounds.current.delete(sound);
+            console.log(`Stopped alarm for notification: ${notificationId}`);
+          }).catch(e => console.log("unload err", e));
+        }).catch(e => console.log("stop err", e));
+      } catch (error) {
+        console.log(`Error stopping alarm for notification ${notificationId}:`, error);
+      }
     }
   };
 
@@ -631,7 +641,7 @@ export default function AddMedication() {
         ['forceStopAlarm', 'true'], 
         ['alarmStopped', 'true']
       ]).catch(() => {});
-      
+
       // Stop all tracked sound instances immediately
       activeSounds.current.forEach(sound => {
         try {
@@ -643,7 +653,7 @@ export default function AddMedication() {
         }
       });
       activeSounds.current.clear();
-      
+
       // Stop current component alarm immediately
       if (alarmSound) {
         try {
@@ -654,7 +664,7 @@ export default function AddMedication() {
         }
         setAlarmSound(null);
       }
-      
+
       // Stop global alarm reference immediately
       if (globalAlarmSound.current) {
         try {
@@ -665,7 +675,7 @@ export default function AddMedication() {
         }
         globalAlarmSound.current = null;
       }
-      
+
       console.log('All alarms stopped immediately from add-medication');
     } catch (error) {
       console.log('Error stopping all alarms:', error);
@@ -688,7 +698,7 @@ export default function AddMedication() {
         }
         setAlarmSound(null);
       }
-      
+
       // Stop the global reference alarm
       if (globalAlarmSound.current) {
         const status = await globalAlarmSound.current.getStatusAsync();
@@ -704,8 +714,10 @@ export default function AddMedication() {
   };
 
   const testNotification = async () => {
+    const notificationId = 'test_notification_' + Date.now();
     // Show notification with action buttons first
     await Notifications.scheduleNotificationAsync({
+      identifier: notificationId,
       content: {
         title: '🔔 MEDICATION ALARM TEST!',
         body: '💊 Test Medicine\n📋 Dose: 1 tablet\n⏰ Time: Now\n\nUse the buttons below to test Stop/Snooze',
@@ -720,7 +732,8 @@ export default function AddMedication() {
           scheduledTime: 'Now',
           day: 1,
           duration: 1,
-          shouldPlayAlarm: true
+          shouldPlayAlarm: true,
+          notificationId: notificationId,
         },
       },
       trigger: {
@@ -730,12 +743,12 @@ export default function AddMedication() {
 
     // Start alarm sound after a short delay to sync with notification
     setTimeout(async () => {
-      await playAlarmSound();
+      await playNotificationAlarm(notificationId);
     }, 1000);
 
     // Auto-stop after 30 seconds if not manually stopped
     setTimeout(() => {
-      stopAlarmSound();
+      stopSpecificNotificationAlarm(notificationId);
     }, 30000);
   };
 
@@ -786,7 +799,7 @@ export default function AddMedication() {
   return (
     <ScrollView style={styles.container}>
       <Text style={styles.title}>Add New Medication</Text>
-      
+
       <View style={styles.form}>
         <Text style={styles.label}>Medicine Image</Text>
         <TouchableOpacity style={styles.imageButton} onPress={pickImage}>

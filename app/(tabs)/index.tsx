@@ -53,34 +53,34 @@ export default function Home() {
         const notificationId = notification.request.identifier;
         console.log(`Medication notification received: ${notificationId}, setting up dismissal detection`);
         
-        // Set up multiple checks to detect if notification was dismissed
-        const checkDismissal = () => {
+        // Use a single, more frequent check with immediate response
+        let isCheckingDismissal = true;
+        const dismissalCheckInterval = setInterval(() => {
+          if (!isCheckingDismissal) {
+            clearInterval(dismissalCheckInterval);
+            return;
+          }
+          
           Notifications.getPresentedNotificationsAsync().then(presentedNotifications => {
             const isStillPresented = presentedNotifications.some(
               presented => presented.request.identifier === notificationId
             );
             
             if (!isStillPresented) {
-              console.log(`Notification ${notificationId} dismissed by swipe - stopping ONLY this alarm`);
+              console.log(`Notification ${notificationId} dismissed by swipe - stopping alarm IMMEDIATELY`);
+              isCheckingDismissal = false;
+              clearInterval(dismissalCheckInterval);
+              // IMMEDIATE stop without any delays
               stopSpecificNotificationAlarm(notificationId);
-              return true; // Dismissed
             }
-            return false; // Still present
           }).catch(() => {});
-        };
+        }, 300); // Check every 300ms for faster response
         
-        // Check multiple times for better detection
-        const timers = [
-          setTimeout(checkDismissal, 1000),  // Check after 1 second
-          setTimeout(checkDismissal, 2000),  // Check after 2 seconds
-          setTimeout(checkDismissal, 3000),  // Check after 3 seconds
-          setTimeout(checkDismissal, 5000),  // Check after 5 seconds
-        ];
-        
-        // Clear all timers after 10 seconds to avoid memory leaks
+        // Stop checking after 30 seconds to prevent memory leaks
         setTimeout(() => {
-          timers.forEach(timer => clearTimeout(timer));
-        }, 10000);
+          isCheckingDismissal = false;
+          clearInterval(dismissalCheckInterval);
+        }, 30000);
       }
     });
 
@@ -181,15 +181,6 @@ export default function Home() {
 
   const playNotificationAlarm = async (notificationId: string) => {
     try {
-      // Check for stop flags before starting alarm
-      const stopFlags = await AsyncStorage.multiGet(['stopAlarmFlag', 'forceStopAlarm', 'alarmStopped']);
-      const shouldStop = stopFlags.some(([key, value]) => value === 'true');
-      
-      if (shouldStop) {
-        console.log(`Alarm blocked for notification ${notificationId} due to stop flag`);
-        return;
-      }
-
       // Stop any existing alarm for this specific notification first
       stopSpecificNotificationAlarm(notificationId);
       
@@ -205,26 +196,8 @@ export default function Home() {
       
       console.log(`Started alarm for notification: ${notificationId}`);
 
-      // Check for stop flags periodically and auto-stop after 60 seconds
-      const checkStopFlags = async () => {
-        const flags = await AsyncStorage.multiGet(['stopAlarmFlag', 'forceStopAlarm', 'alarmStopped']);
-        if (flags.some(([key, value]) => value === 'true')) {
-          stopSpecificNotificationAlarm(notificationId);
-          return true;
-        }
-        return false;
-      };
-
-      // Check every 500ms for stop flags
-      const intervalId = setInterval(async () => {
-        if (await checkStopFlags()) {
-          clearInterval(intervalId);
-        }
-      }, 500);
-
-      // Auto-stop after 60 seconds
+      // Auto-stop after 60 seconds only
       setTimeout(() => {
-        clearInterval(intervalId);
         stopSpecificNotificationAlarm(notificationId);
       }, 60000);
     } catch (error) {
@@ -239,20 +212,21 @@ export default function Home() {
 
   const stopSpecificNotificationAlarm = (notificationId: string) => {
     try {
-      // Clear stop flags
-      AsyncStorage.multiRemove(['stopAlarmFlag', 'forceStopAlarm', 'alarmStopped']).catch(() => {});
-      
       const sound = notificationAlarms.current.get(notificationId);
       if (sound) {
-        // Stop and unload this specific sound
-        sound.stopAsync().catch(() => {});
-        sound.unloadAsync().catch(() => {});
+        // IMMEDIATE synchronous stop operations
+        try {
+          sound.stopAsync();
+          sound.unloadAsync();
+        } catch (e) {
+          // Ignore errors for immediate response
+        }
         
-        // Remove from tracking maps
+        // Remove from tracking maps immediately
         notificationAlarms.current.delete(notificationId);
         activeSounds.current.delete(sound);
         
-        // If this was the current alarmSound, clear it
+        // If this was the current alarmSound, clear it immediately
         if (alarmSound === sound) {
           setAlarmSound(null);
         }

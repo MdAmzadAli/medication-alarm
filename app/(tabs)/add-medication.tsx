@@ -653,14 +653,12 @@ export default function AddMedication() {
         </TouchableOpacity>
 
         <TouchableOpacity style={styles.stopAlarmButton} onPress={() => {
-          // Set global stop flag for immediate response
-          AsyncStorage.multiSet([
-            ['stopAlarmFlag', 'true'],
-            ['forceStopAlarm', 'true'],
-            ['alarmStopped', 'true']
-          ]).catch(() => {});
+          // Stop all current test alarms immediately
+          console.log('Manual stop test alarm button pressed');
+          // This will be handled by the global alarm stop function in index.tsx
+          // No AsyncStorage flags needed - direct sound stopping
         }}>
-          <Text style={styles.stopAlarmButtonText}>🛑 Stop Test Alarm</Text>
+          <Text style={styles.stopAlarmButtonText">🛑 Stop Test Alarm</Text>
         </TouchableOpacity>
 
         <TouchableOpacity style={styles.submitButton} onPress={addMedication}>

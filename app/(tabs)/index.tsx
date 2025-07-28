@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import {
   View,
@@ -16,6 +15,7 @@ import * as Notifications from 'expo-notifications';
 import { Audio } from 'expo-av';
 import { useFocusEffect } from '@react-navigation/native';
 import * as ImagePicker from 'expo-image-picker';
+import * as DocumentPicker from 'expo-document-picker';
 
 interface Medication {
   id: string;
@@ -37,6 +37,8 @@ export default function Home() {
   const [selectedMedication, setSelectedMedication] = useState<Medication | null>(null);
   const [editingMedication, setEditingMedication] = useState<Medication | null>(null);
   const [showEditModal, setShowEditModal] = useState(false);
+  const [customRingtone, setCustomRingtone] = useState<string | null>(null);
+  const [isDarkMode, setIsDarkMode] = useState(false);
 
   // Form data for adding new medication
   const [formData, setFormData] = useState({
@@ -50,13 +52,14 @@ export default function Home() {
 
   // Keep track of individual alarm sounds by notification ID
   const notificationAlarms = React.useRef<Map<string, Audio.Sound>>(new Map());
-  
+
   // Keep track of all active sound instances
   const activeSounds = React.useRef<Set<Audio.Sound>>(new Set());
 
   useEffect(() => {
     loadMedications();
     setupNotificationCategories();
+    loadSettings();
 
     // Listen for notifications when app is in foreground
     const notificationListener = Notifications.addNotificationReceivedListener(notification => {
@@ -72,7 +75,7 @@ export default function Home() {
       if (notification.request.content.data?.shouldPlayAlarm || notification.request.content.data?.type === 'medication_reminder') {
         const notificationId = notification.request.identifier;
         console.log(`Medication notification received: ${notificationId}, setting up dismissal detection`);
-        
+
         // Use a single, more frequent check with immediate response
         let isCheckingDismissal = true;
         const dismissalCheckInterval = setInterval(() => {
@@ -80,12 +83,12 @@ export default function Home() {
             clearInterval(dismissalCheckInterval);
             return;
           }
-          
+
           Notifications.getPresentedNotificationsAsync().then(presentedNotifications => {
             const isStillPresented = presentedNotifications.some(
               presented => presented.request.identifier === notificationId
             );
-            
+
             if (!isStillPresented) {
               console.log(`Notification ${notificationId} dismissed by swipe - stopping alarm IMMEDIATELY`);
               isCheckingDismissal = false;
@@ -95,7 +98,7 @@ export default function Home() {
             }
           }).catch(() => {});
         }, 300); // Check every 300ms for faster response
-        
+
         // Stop checking after 30 seconds to prevent memory leaks
         setTimeout(() => {
           isCheckingDismissal = false;
@@ -108,7 +111,7 @@ export default function Home() {
     const responseListener = Notifications.addNotificationResponseReceivedListener(async (response) => {
       const { actionIdentifier, notification } = response;
       const notificationData = notification.request.content.data;
-      
+
       if (notificationData?.type === 'medication_reminder') {
         if (actionIdentifier === 'STOP_ACTION') {
           // STOP only this specific notification's alarm
@@ -117,7 +120,7 @@ export default function Home() {
           stopSpecificNotificationAlarm(notificationId);
           // Stop alarm and dismiss notification completely
           await Notifications.dismissNotificationAsync(notification.request.identifier);
-          
+
           // Cancel any pending snooze alarms for this medication
           if (notificationData.snoozeId) {
             const allNotifications = await Notifications.getAllScheduledNotificationsAsync();
@@ -127,22 +130,22 @@ export default function Home() {
               }
             }
           }
-          
+
           Alert.alert(
             '✅ Alarm Stopped',
             `Medication reminder for ${notificationData.medicationName} has been stopped completely.`,
             [{ text: 'OK' }]
           );
-          
+
         } else if (actionIdentifier === 'SNOOZE_ACTION') {
           // IMMEDIATELY stop this specific alarm
           const notificationId = notification.request.identifier;
           console.log(`SNOOZE ACTION: Stopping alarm for notification ${notificationId}`);
           stopSpecificNotificationAlarm(notificationId);
-          
+
           // Don't dismiss here - let scheduleSnoozeNotification handle it
           await scheduleSnoozeNotification(notificationData, notificationId);
-          
+
         } else if (actionIdentifier === 'DISMISS_ACTION') {
           // IMMEDIATELY stop this specific alarm
           const notificationId = notification.request.identifier;
@@ -150,7 +153,7 @@ export default function Home() {
           stopSpecificNotificationAlarm(notificationId);
           // Dismiss snoozed notification permanently
           await Notifications.dismissNotificationAsync(notification.request.identifier);
-          
+
           // Cancel any pending snooze alarms for this medication
           if (notificationData.snoozeId) {
             const allNotifications = await Notifications.getAllScheduledNotificationsAsync();
@@ -160,19 +163,19 @@ export default function Home() {
               }
             }
           }
-          
+
           Alert.alert(
             '✅ Reminder Dismissed',
             `Snoozed reminder for ${notificationData.medicationName} has been dismissed permanently.`,
             [{ text: 'OK' }]
           );
-          
+
         } else {
           // Default tap action - IMMEDIATELY stop this specific alarm
           const notificationId = notification.request.identifier;
           console.log(`TAP ACTION: Stopping alarm for notification ${notificationId}`);
           stopSpecificNotificationAlarm(notificationId);
-          
+
           if (notificationData.isSnoozeWaiting) {
             // If it's a waiting snooze notification, show info
             Alert.alert(
@@ -203,17 +206,18 @@ export default function Home() {
     try {
       // Stop any existing alarm for this specific notification first
       stopSpecificNotificationAlarm(notificationId);
-      
+
+      const alarmUri = customRingtone || 'https://www.soundjay.com/misc/sounds/bell-ringing-05.wav';
       const { sound } = await Audio.Sound.createAsync(
-        { uri: 'https://www.soundjay.com/misc/sounds/bell-ringing-05.wav' },
+        { uri: alarmUri },
         { shouldPlay: true, isLooping: true, volume: 1.0 }
       );
-      
+
       // Track this sound instance by notification ID
       notificationAlarms.current.set(notificationId, sound);
       activeSounds.current.add(sound);
       setAlarmSound(sound);
-      
+
       console.log(`Started alarm for notification: ${notificationId}`);
 
       // Auto-stop after 60 seconds only
@@ -236,16 +240,16 @@ export default function Home() {
         } catch (e) {
           // Ignore errors for immediate response
         }
-        
+
         // Remove from tracking maps immediately
         notificationAlarms.current.delete(notificationId);
         activeSounds.current.delete(sound);
-        
+
         // If this was the current alarmSound, clear it immediately
         if (alarmSound === sound) {
           setAlarmSound(null);
         }
-        
+
         console.log(`Stopped alarm for notification: ${notificationId}`);
       } else {
         console.log(`No alarm found for notification: ${notificationId}`);
@@ -287,7 +291,7 @@ export default function Home() {
 
   const scheduleSnoozeNotification = async (originalData: any, currentNotificationId: string) => {
     const currentSnoozeCount = originalData.snoozeCount || 0;
-    
+
     // Check if maximum snoozes reached
     if (currentSnoozeCount >= 7) {
       Alert.alert(
@@ -300,11 +304,11 @@ export default function Home() {
 
     const newSnoozeCount = currentSnoozeCount + 1;
     const snoozeId = originalData.snoozeId || `snooze_${originalData.medicationName}_${Date.now()}`;
-    
+
     try {
       // Clear any existing notifications with same identifier first
       await Notifications.dismissNotificationAsync(currentNotificationId);
-      
+
       // Create ONE snoozed notification using the same ID
       await Notifications.scheduleNotificationAsync({
         identifier: currentNotificationId, // Reuse same ID to prevent duplicates
@@ -333,7 +337,7 @@ export default function Home() {
       setTimeout(async () => {
         try {
           await Notifications.dismissNotificationAsync(currentNotificationId);
-          
+
           // Restore full notification with ALL original buttons
           await Notifications.scheduleNotificationAsync({
             identifier: currentNotificationId, // Same ID to replace existing
@@ -357,13 +361,13 @@ export default function Home() {
             },
             trigger: { seconds: 1 },
           });
-          
+
           await playNotificationAlarm(currentNotificationId);
         } catch (error) {
           console.log('Error updating notification after snooze:', error);
         }
       }, 2 * 60 * 1000);
-      
+
     } catch (error) {
       console.log('Error in snooze notification process:', error);
     }
@@ -548,7 +552,7 @@ export default function Home() {
         imageUri: '',
       });
       setShowAddModal(false);
-      
+
       Alert.alert('Success', 'Medication reminder added successfully!');
     } catch (error) {
       Alert.alert('Error', 'Failed to save medication');
@@ -611,6 +615,135 @@ export default function Home() {
 
     if (!result.canceled) {
       setFormData({ ...formData, imageUri: result.assets[0].uri });
+    }
+  };
+
+  const pickImageForEdit = async () => {
+    Alert.alert(
+      'Select Image',
+      'Choose how you want to add the medicine image',
+      [
+        {
+          text: 'Camera',
+          onPress: openCameraForEdit,
+        },
+        {
+          text: 'Gallery',
+          onPress: openGalleryForEdit,
+        },
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+      ]
+    );
+  };
+
+  const openCameraForEdit = async () => {
+    const { status } = await ImagePicker.requestCameraPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Permission needed', 'Camera permission is required to take photos');
+      return;
+    }
+
+    const result = await ImagePicker.launchCameraAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      aspect: [4, 3],
+      quality: 1,
+    });
+
+    if (!result.canceled && editingMedication) {
+      setEditingMedication({ ...editingMedication, imageUri: result.assets[0].uri });
+    }
+  };
+
+  const openGalleryForEdit = async () => {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Permission needed', 'Gallery permission is required to select photos');
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      aspect: [4, 3],
+      quality: 1,
+    });
+
+    if (!result.canceled && editingMedication) {
+      setEditingMedication({ ...editingMedication, imageUri: result.assets[0].uri });
+    }
+  };
+
+  const pickCustomRingtone = async () => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: 'audio/*',
+        copyToCacheDirectory: true,
+      });
+
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        const audioFile = result.assets[0];
+        setCustomRingtone(audioFile.uri);
+        await AsyncStorage.setItem('customRingtone', audioFile.uri);
+        Alert.alert('Success', 'Custom ringtone selected successfully!');
+      }
+    } catch (error) {
+      Alert.alert('Error', 'Failed to select audio file. Please try again.');
+      console.log('Error picking ringtone:', error);
+    }
+  };
+
+  const testCustomRingtone = async () => {
+    if (!customRingtone) {
+      Alert.alert('No Ringtone', 'Please select a custom ringtone first.');
+      return;
+    }
+
+    try {
+      const { sound } = await Audio.Sound.createAsync(
+        { uri: customRingtone },
+        { shouldPlay: true, volume: 1.0 }
+      );
+
+      // Stop after 3 seconds
+      setTimeout(async () => {
+        await sound.stopAsync();
+        await sound.unloadAsync();
+      }, 3000);
+
+    } catch (error) {
+      Alert.alert('Error', 'Failed to play custom ringtone. The file might be corrupted or unsupported.');
+      console.log('Error testing ringtone:', error);
+    }
+  };
+
+  const loadSettings = async () => {
+    try {
+      const savedRingtone = await AsyncStorage.getItem('customRingtone');
+      const savedDarkMode = await AsyncStorage.getItem('isDarkMode');
+
+      if (savedRingtone) {
+        setCustomRingtone(savedRingtone);
+      }
+      if (savedDarkMode) {
+        setIsDarkMode(JSON.parse(savedDarkMode));
+      }
+    } catch (error) {
+      console.log('Error loading settings:', error);
+    }
+  };
+
+  const saveSettings = async () => {
+    try {
+      await AsyncStorage.setItem('isDarkMode', JSON.stringify(isDarkMode));
+      if (customRingtone) {
+        await AsyncStorage.setItem('customRingtone', customRingtone);
+      }
+    } catch (error) {
+      console.log('Error saving settings:', error);
     }
   };
 
@@ -787,6 +920,18 @@ export default function Home() {
             </View>
 
             <View style={styles.form}>
+              <Text style={styles.label}>Medicine Image</Text>
+              <TouchableOpacity style={styles.imageButton} onPress={pickImageForEdit}>
+                {editingMedication.imageUri ? (
+                  <Image source={{ uri: editingMedication.imageUri }} style={styles.medicineImage} />
+                ) : (
+                  <View style={styles.imagePlaceholder}>
+                    <Text style={styles.imagePlaceholderText}>📷 Add Photo</Text>
+                    <Text style={styles.imagePlaceholderSubtext}>Tap to take photo or select from gallery</Text>
+                  </View>
+                )}
+              </TouchableOpacity>
+
               <Text style={styles.label}>Medicine Name</Text>
               <TextInput
                 style={styles.input}
@@ -798,6 +943,7 @@ export default function Home() {
               <Text style={styles.label}>Dose Amount</Text>
               <TextInput
                 style={styles.input}
+```text
                 value={editingMedication.dose}
                 onChangeText={(text) => setEditingMedication({ ...editingMedication, dose: text })}
                 placeholder="e.g., 1 tablet, 2 spoons"
@@ -856,7 +1002,7 @@ export default function Home() {
               {selectedMedication.imageUri && (
                 <Image source={{ uri: selectedMedication.imageUri }} style={styles.detailImage} />
               )}
-              
+
               <View style={styles.detailInfo}>
                 <Text style={styles.detailName}>{selectedMedication.name}</Text>
                 <Text style={styles.detailText}>💊 Dose: {selectedMedication.dose}</Text>
@@ -864,7 +1010,7 @@ export default function Home() {
                 <Text style={styles.detailText}>📅 Duration: {selectedMedication.duration} days</Text>
                 <Text style={styles.detailText}>🗓️ Started: {new Date(selectedMedication.startDate).toLocaleDateString()}</Text>
                 <Text style={styles.detailText}>📈 Times per day: {selectedMedication.timesPerDay}</Text>
-                
+
                 <View style={styles.statusContainer}>
                   <Text style={styles.statusText}>
                     Status: {new Date() > new Date(new Date(selectedMedication.startDate).getTime() + selectedMedication.duration * 24 * 60 * 60 * 1000) ? '✅ Completed' : '🔄 Active'}

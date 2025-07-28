@@ -524,38 +524,48 @@ export default function AddMedication() {
   const [alarmSound, setAlarmSound] = useState<Audio.Sound | null>(null);
 
   // Global reference for alarm sound management
-  React.useRef<Audio.Sound | null>(null);
   const globalAlarmSound = React.useRef<Audio.Sound | null>(null);
+  
+  // Keep track of all active sound instances
+  const activeSounds = React.useRef<Set<Audio.Sound>>(new Set());
 
   const playAlarmSound = async () => {
     try {
-      // Stop any existing alarm first
-      await stopAlarmSound();
+      // Stop any existing alarm first - immediate stop
+      stopAlarmSoundImmediate();
       
       const { sound } = await Audio.Sound.createAsync(
         { uri: 'https://www.soundjay.com/misc/sounds/bell-ringing-05.wav' },
         { shouldPlay: true, isLooping: true, volume: 1.0 }
       );
+      
+      // Track all sound instances
       setAlarmSound(sound);
       globalAlarmSound.current = sound;
+      activeSounds.current.add(sound);
       
-      // Monitor for stop flag from other components
+      // Monitor for multiple stop flags from other components
       const checkStopFlag = () => {
-        AsyncStorage.getItem('stopAlarmFlag').then(flag => {
-          if (flag === 'true') {
+        AsyncStorage.multiGet(['stopAlarmFlag', 'forceStopAlarm', 'alarmStopped']).then(values => {
+          const [[,stopFlag], [,forceStop], [,alarmStopped]] = values;
+          if (stopFlag === 'true' || forceStop === 'true' || alarmStopped === 'true') {
             stopAlarmSoundImmediate();
-            AsyncStorage.setItem('stopAlarmFlag', 'false').catch(() => {});
+            AsyncStorage.multiSet([
+              ['stopAlarmFlag', 'false'],
+              ['forceStopAlarm', 'false'],
+              ['alarmStopped', 'false']
+            ]).catch(() => {});
           }
         }).catch(() => {});
       };
       
-      // Check every 100ms for immediate response
-      const stopFlagInterval = setInterval(checkStopFlag, 100);
+      // Check every 50ms for faster response
+      const stopFlagInterval = setInterval(checkStopFlag, 50);
       
       // Clear interval after 60 seconds
       setTimeout(() => {
         clearInterval(stopFlagInterval);
-        stopAlarmSound();
+        stopAlarmSoundImmediate();
       }, 60000);
       
     } catch (error) {
@@ -564,32 +574,50 @@ export default function AddMedication() {
   };
 
   const stopAllGlobalAlarms = () => {
-    // Stop all possible alarm instances immediately
+    // IMMEDIATE stop - no async operations to prevent delays
     try {
-      // Stop current component alarm
+      // Set multiple stop flags immediately
+      AsyncStorage.multiSet([
+        ['stopAlarmFlag', 'true'],
+        ['forceStopAlarm', 'true'], 
+        ['alarmStopped', 'true']
+      ]).catch(() => {});
+      
+      // Stop all tracked sound instances immediately
+      activeSounds.current.forEach(sound => {
+        try {
+          // Immediate stop without checking status to avoid delays
+          sound.stopAsync().catch(() => {});
+          sound.unloadAsync().catch(() => {});
+        } catch (e) {
+          // Ignore errors for immediate response
+        }
+      });
+      activeSounds.current.clear();
+      
+      // Stop current component alarm immediately
       if (alarmSound) {
-        alarmSound.getStatusAsync().then(status => {
-          if (status.isLoaded) {
-            alarmSound.stopAsync().catch(() => {});
-            alarmSound.unloadAsync().catch(() => {});
-          }
-        }).catch(() => {});
+        try {
+          alarmSound.stopAsync().catch(() => {});
+          alarmSound.unloadAsync().catch(() => {});
+        } catch (e) {
+          // Ignore errors for immediate response  
+        }
         setAlarmSound(null);
       }
       
-      // Stop global alarm reference
+      // Stop global alarm reference immediately
       if (globalAlarmSound.current) {
-        globalAlarmSound.current.getStatusAsync().then(status => {
-          if (status.isLoaded) {
-            globalAlarmSound.current.stopAsync().catch(() => {});
-            globalAlarmSound.current.unloadAsync().catch(() => {});
-          }
-        }).catch(() => {});
+        try {
+          globalAlarmSound.current.stopAsync().catch(() => {});
+          globalAlarmSound.current.unloadAsync().catch(() => {});
+        } catch (e) {
+          // Ignore errors for immediate response
+        }
         globalAlarmSound.current = null;
       }
       
-      // Set flag to stop alarms across components
-      AsyncStorage.setItem('stopAlarmFlag', 'true').catch(() => {});
+      console.log('All alarms stopped immediately from add-medication');
     } catch (error) {
       console.log('Error stopping all alarms:', error);
     }
